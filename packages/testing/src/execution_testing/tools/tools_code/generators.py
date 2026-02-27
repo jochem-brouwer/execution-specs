@@ -489,6 +489,104 @@ class Create2PreimageLayout(Bytecode):
         )
 
 
+def _rlp_encode_nonce(nonce: int) -> bytes:
+    """RLP-encode a nonce value for CREATE address computation."""
+    if nonce == 0:
+        return b"\x80"
+    if nonce <= 0x7F:
+        return bytes([nonce])
+    byte_len = (nonce.bit_length() + 7) // 8
+    return bytes([0x80 + byte_len]) + nonce.to_bytes(byte_len, "big")
+
+
+class CreatePreimageLayout(Bytecode):
+    """
+    Set up the preimage in memory for CREATE address computation.
+
+    Create the standard memory layout required to compute a CREATE address
+    using keccak256(rlp.encode([sender_address, nonce])).
+
+    Memory layout after execution:
+    - MEM[offset + 10] = RLP list prefix byte
+    - MEM[offset + 11] = 0x94 (RLP prefix for 20-byte string)
+    - MEM[offset + 12: offset + 32] = sender_address (20 bytes)
+    - MEM[offset + 32:] = RLP-encoded nonce bytes
+
+    To compute the CREATE address, use: `.address_op()` or
+    `Op.SHA3(offset + 10, preimage_size)`.
+    The resulting hash's lower 20 bytes (bytes 12-31) form the address.
+    """
+
+    offset: int = 0
+    preimage_size: int = 0
+
+    def __new__(
+        cls,
+        *,
+        sender_address: int | bytes | Bytecode,
+        nonce: int,
+        offset: int = 0,
+        old_memory_size: int = 0,
+    ) -> Self:
+        """
+        Assemble the bytecode that sets up the memory layout for CREATE
+        address computation.
+        """
+        nonce_rlp = _rlp_encode_nonce(nonce)
+        # payload = 21 (address RLP) + len(nonce_rlp)
+        payload_length = 21 + len(nonce_rlp)
+        list_prefix = 0xC0 + payload_length
+        preimage_size = 1 + payload_length  # list prefix + payload
+
+        required_size = offset + 64
+        new_memory_size = max(old_memory_size, required_size)
+
+        # Store the address at offset (20-byte address at bytes 12-31)
+        bytecode = Op.MSTORE(offset=offset, value=sender_address)
+        # Store RLP list prefix
+        bytecode += Op.MSTORE8(offset=offset + 10, value=list_prefix)
+        # Store address RLP prefix (0x94 = 0x80 + 20)
+        bytecode += Op.MSTORE8(offset=offset + 11, value=0x94)
+        # Store nonce RLP bytes
+        for i, byte_val in enumerate(nonce_rlp):
+            if i == len(nonce_rlp) - 1:
+                # Last MSTORE8 carries gas accounting
+                bytecode += Op.MSTORE8(
+                    offset=offset + 32 + i,
+                    value=byte_val,
+                    old_memory_size=old_memory_size,
+                    new_memory_size=new_memory_size,
+                )
+            else:
+                bytecode += Op.MSTORE8(
+                    offset=offset + 32 + i,
+                    value=byte_val,
+                )
+
+        instance = super().__new__(cls, bytecode)
+        instance.offset = offset
+        instance.preimage_size = preimage_size
+        return instance
+
+    @property
+    def nonce_offset(self) -> int:
+        """Return the nonce memory offset of the preimage."""
+        return self.offset + 32
+
+    def address_op(self) -> Bytecode:
+        """Return the bytecode that computes the CREATE address."""
+        address_mask = (1 << 160) - 1
+        return Op.AND(
+            address_mask,
+            Op.SHA3(
+                offset=self.offset + 10,
+                size=self.preimage_size,
+                # Gas accounting
+                data_size=self.preimage_size,
+            ),
+        )
+
+
 class TransactionWithCost(Transaction):
     """Transaction object that can include the expected gas to be consumed."""
 
