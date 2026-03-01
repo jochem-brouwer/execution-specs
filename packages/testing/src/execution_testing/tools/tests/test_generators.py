@@ -121,3 +121,63 @@ def test_create_preimage_layout_address(nonce: int) -> None:
         [sender_int.to_bytes(20, "big"), int_to_bytes(nonce)]
     )
     assert layout.preimage_size == len(expected_rlp)
+
+
+def test_create_preimage_layout_dynamic_is_bytecode() -> None:
+    """Test that dynamic nonce layout produces valid Bytecode."""
+    layout = CreatePreimageLayout(
+        sender_address=0xDEADBEEF,
+        nonce=Op.CALLDATALOAD(0),
+    )
+    assert len(layout) > 0
+    assert layout._dynamic is True
+    assert layout.preimage_size == 0
+
+
+def test_create_preimage_layout_dynamic_address_op() -> None:
+    """Test that dynamic address_op uses MLOAD for preimage size."""
+    layout = CreatePreimageLayout(
+        sender_address=0xDEADBEEF,
+        nonce=Op.CALLDATALOAD(0),
+    )
+    address_mask = (1 << 160) - 1
+    expected = Op.AND(
+        address_mask,
+        Op.SHA3(
+            offset=10,
+            size=Op.MLOAD(64),
+            data_size=25,
+        ),
+    )
+    assert bytes(layout.address_op()) == bytes(expected)
+
+
+def test_create_preimage_layout_set_nonce_op() -> None:
+    """Test that set_nonce_op returns valid Bytecode."""
+    layout = CreatePreimageLayout(
+        sender_address=0xDEADBEEF,
+        nonce=Op.CALLDATALOAD(0),
+    )
+    result = layout.set_nonce_op(42)
+    assert len(result) > 0
+
+
+def test_create_preimage_layout_increment_nonce_op() -> None:
+    """Test that increment_nonce_op returns valid Bytecode."""
+    layout = CreatePreimageLayout(
+        sender_address=0xDEADBEEF,
+        nonce=Op.CALLDATALOAD(0),
+    )
+    result = layout.increment_nonce_op()
+    assert len(result) > 0
+
+
+def test_create_preimage_layout_static_set_nonce_switches() -> None:
+    """Test that set_nonce_op on static layout switches to dynamic."""
+    layout = CreatePreimageLayout(
+        sender_address=0xDEADBEEF,
+        nonce=0,
+    )
+    assert layout._dynamic is False
+    layout.set_nonce_op(42)
+    assert layout._dynamic is True
