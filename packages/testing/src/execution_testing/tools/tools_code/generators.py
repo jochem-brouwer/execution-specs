@@ -588,9 +588,7 @@ def _dynamic_nonce_encode_bytecode(
         Op.ADD(
             22,
             Op.ADD(
-                Op.ADD(
-                    stored_byte_length, Op.ISZERO(stored_byte_length)
-                ),
+                Op.ADD(stored_byte_length, Op.ISZERO(stored_byte_length)),
                 Op.GT(get_nonce, 127),
             ),
         ),
