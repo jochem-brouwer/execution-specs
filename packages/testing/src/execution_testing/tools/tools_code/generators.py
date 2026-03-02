@@ -508,7 +508,8 @@ def _dynamic_nonce_encode_bytecode(
     """
     Generate branch-free bytecode to RLP-encode a nonce to memory.
 
-    Support nonce range 0 to 65535 (1 to 3 byte RLP encoding).
+    Support nonce range 1 to 2^64 - 1.  Nonce 0 is not handled
+    because EIP-161 guarantees contract nonces start at 1.
 
     Use CLZ to derive the nonce byte length, then compute the
     RLP encoding and preimage size from it.
@@ -520,27 +521,27 @@ def _dynamic_nonce_encode_bytecode(
     byte_length_offset = offset + 64
 
     get_nonce = Op.MLOAD(nonce_scratch)
-    get_byte_length_offset = Op.MLOAD(byte_length_offset)
+    stored_byte_length = Op.MLOAD(byte_length_offset)
 
     # Store raw nonce in scratch memory
     bytecode = Op.MSTORE(nonce_scratch, nonce)
 
     # byte_length = DIV(SUB(263, CLZ(n)), 8)
-    # CLZ(0)=256 → 0, CLZ(1..255)=248..255 → 1,
-    # CLZ(256..65535)=240..247 → 2
+    # CLZ(1..255)=248..255 → 1, CLZ(256..65535)=240..247 → 2,
+    # ... CLZ(2^56..2^64-1)=192..199 → 8
     bytecode += Op.MSTORE(
         byte_length_offset,
         Op.DIV(Op.SUB(263, Op.CLZ(get_nonce)), 8),
     )
 
-    # Branch-free nonce RLP encoding using CLZ-derived
-    # byte_length:
+    # Branch-free nonce RLP encoding (nonce >= 1) using
+    # CLZ-derived byte_length:
     #
     # has_prefix     = GT(n, 127)
     # not_has_prefix = ISZERO(GT(n, 127))
     #
-    # case_short = not_has_prefix * (n + ISZERO(n) * 0x80)
-    # case_long  = has_prefix
+    # case_short = not_has_prefix * n        (nonce 1..127)
+    # case_long  = has_prefix                (nonce 128+)
     #   * ((0x80 + byte_length) * 256^byte_length + n)
     # encoded    = case_short + case_long
     #
@@ -553,16 +554,14 @@ def _dynamic_nonce_encode_bytecode(
     has_prefix = Op.GT(get_nonce, 127)
     not_has_prefix = Op.ISZERO(Op.GT(get_nonce, 127))
 
-    case_short = Op.MUL(
-        not_has_prefix,
-        Op.ADD(get_nonce, Op.MUL(Op.ISZERO(get_nonce), 0x80)),
-    )
+    case_short = Op.MUL(not_has_prefix, get_nonce)
+
     case_long = Op.MUL(
         has_prefix,
         Op.ADD(
             Op.MUL(
-                Op.ADD(0x80, get_byte_length_offset),
-                Op.EXP(256, get_byte_length_offset),
+                Op.ADD(0x80, stored_byte_length),
+                Op.EXP(256, stored_byte_length),
             ),
             get_nonce,
         ),
@@ -571,7 +570,7 @@ def _dynamic_nonce_encode_bytecode(
     encoded = Op.ADD(case_short, case_long)
 
     rlp_len = Op.ADD(
-        Op.ADD(get_byte_length_offset, Op.ISZERO(get_byte_length_offset)),
+        Op.ADD(stored_byte_length, Op.ISZERO(stored_byte_length)),
         Op.GT(get_nonce, 127),
     )
     mstore_value = Op.MUL(encoded, Op.EXP(256, Op.SUB(32, rlp_len)))
@@ -590,7 +589,7 @@ def _dynamic_nonce_encode_bytecode(
             22,
             Op.ADD(
                 Op.ADD(
-                    get_byte_length_offset, Op.ISZERO(get_byte_length_offset)
+                    stored_byte_length, Op.ISZERO(stored_byte_length)
                 ),
                 Op.GT(get_nonce, 127),
             ),
@@ -629,7 +628,7 @@ class CreatePreimageLayout(Bytecode):
     - MEM[offset + 64: offset + 96] = preimage_size
     - MEM[offset + 96: offset + 128] = raw nonce (scratch)
 
-    Supported dynamic nonce range: 0 to 65535.
+    Supported dynamic nonce range: 1 to 2^64 - 1.
 
     To compute the CREATE address, use `.address_op()`.
     The resulting hash's lower 20 bytes form the address.

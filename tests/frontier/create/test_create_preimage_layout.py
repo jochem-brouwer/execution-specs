@@ -162,15 +162,9 @@ def test_create_preimage_layout_dynamic_nonce(
         protected=fork.supports_protected_txs(),
     )
 
-    expected_address = compute_create_address(
-        address=sender, nonce=nonce
-    )
+    expected_address = compute_create_address(address=sender, nonce=nonce)
     post = {
-        contract: Account(
-            storage={
-                0: int.from_bytes(expected_address, "big")
-            }
-        )
+        contract: Account(storage={0: int.from_bytes(expected_address, "big")})
     }
 
     state_test(env=Environment(), pre=pre, post=post, tx=tx)
@@ -215,9 +209,7 @@ def test_create_preimage_layout_increment_nonce(
 
     expected_storage = {
         n: int.from_bytes(
-            compute_create_address(
-                address=sender_address, nonce=n
-            ),
+            compute_create_address(address=sender_address, nonce=n),
             "big",
         )
         for n in range(DYNAMIC_NONCE_COUNT)

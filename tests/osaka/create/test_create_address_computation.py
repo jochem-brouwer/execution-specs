@@ -83,9 +83,7 @@ def test_create_address_dynamic_nonce(
 
 # Address with first and last byte zero to exercise edge cases
 # in the 20-byte address portion of the CREATE preimage.
-DEPLOYER_ADDRESS = Address(
-    0x00112233445566778899AABBCCDDEEFF11223300
-)
+DEPLOYER_ADDRESS = Address(0x00112233445566778899AABBCCDDEEFF11223300)
 
 BOUNDARY_ITERATIONS = 10
 
@@ -93,7 +91,6 @@ BOUNDARY_ITERATIONS = 10
 @pytest.mark.parametrize(
     "starting_nonce",
     [
-        pytest.param(0, id="nonce_0_rlp_empty_byte"),
         pytest.param(127, id="nonce_127_max_single_byte"),
         pytest.param(255, id="nonce_max_1_byte_value"),
         pytest.param(256**2 - 1, id="nonce_max_2_byte_value"),
@@ -122,7 +119,7 @@ def test_create_address_nonce_boundary(
     Each boundary value is the last nonce before the RLP encoding
     grows by one byte.
     """
-    
+
     # EVM does not allow nonces higher than 8 bytes, so a PUSH8 will always fit
     nonce_push = Op.PUSH8(starting_nonce)
 
