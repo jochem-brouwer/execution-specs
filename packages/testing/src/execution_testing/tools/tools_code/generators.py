@@ -510,52 +510,51 @@ def _dynamic_nonce_encode_bytecode(
 
     Support nonce range 0 to 65535 (1 to 3 byte RLP encoding).
 
+    Use CLZ to derive the nonce byte length, then compute the
+    RLP encoding and preimage size from it.
+
     Write RLP list prefix at offset+10, encoded nonce at offset+32,
     preimage_size at offset+64, and raw nonce at offset+96.
     """
     nonce_scratch = offset + 96
-    preimage_size_offset = offset + 64
+    byte_length_offset = offset + 64
 
     def _n() -> Bytecode:
         return Op.MLOAD(nonce_scratch)
 
-    def _ps() -> Bytecode:
-        return Op.MLOAD(preimage_size_offset)
+    def _bl() -> Bytecode:
+        return Op.MLOAD(byte_length_offset)
 
     # Store raw nonce in scratch memory
     bytecode = Op.MSTORE(nonce_scratch, nonce)
 
-    # preimage_size = 23 + GT(n, 127) + GT(n, 255)
+    # byte_length = DIV(SUB(263, CLZ(n)), 8)
+    # CLZ(0)=256 → 0, CLZ(1..255)=248..255 → 1,
+    # CLZ(256..65535)=240..247 → 2
     bytecode += Op.MSTORE(
-        preimage_size_offset,
-        Op.ADD(
-            23,
-            Op.ADD(Op.GT(_n(), 127), Op.GT(_n(), 255)),
-        ),
+        byte_length_offset,
+        Op.DIV(Op.SUB(263, Op.CLZ(_n())), 8),
     )
 
-    # List prefix = 0xBF + preimage_size
-    bytecode += Op.MSTORE8(
-        offset + 10, Op.ADD(0xBF, _ps())
-    )
-
-    # Branch-free nonce RLP encoding:
+    # Branch-free nonce RLP encoding using CLZ-derived
+    # byte_length:
     #
     # has_prefix     = GT(n, 127)
     # not_has_prefix = ISZERO(GT(n, 127))
-    # byte_count     = preimage_size - 23
     #
     # case_short = not_has_prefix * (n + ISZERO(n) * 0x80)
     # case_long  = has_prefix
-    #            * ((0x80 + byte_count) * 256^byte_count + n)
+    #   * ((0x80 + byte_length) * 256^byte_length + n)
     # encoded    = case_short + case_long
     #
+    # rlp_len = byte_length + ISZERO(byte_length)
+    #         + GT(n, 127)
+    #
     # Left-align in 32-byte MSTORE word:
-    # mstore_value = encoded * 256^(54 - preimage_size)
+    # mstore_value = encoded * 256^(32 - rlp_len)
 
     has_prefix = Op.GT(_n(), 127)
     not_has_prefix = Op.ISZERO(Op.GT(_n(), 127))
-    byte_count = Op.SUB(_ps(), 23)
 
     case_short = Op.MUL(
         not_has_prefix,
@@ -565,21 +564,49 @@ def _dynamic_nonce_encode_bytecode(
         has_prefix,
         Op.ADD(
             Op.MUL(
-                Op.ADD(0x80, byte_count),
-                Op.EXP(256, byte_count),
+                Op.ADD(0x80, _bl()),
+                Op.EXP(256, _bl()),
             ),
             _n(),
         ),
     )
 
     encoded = Op.ADD(case_short, case_long)
+
+    rlp_len = Op.ADD(
+        Op.ADD(_bl(), Op.ISZERO(_bl())),
+        Op.GT(_n(), 127),
+    )
     mstore_value = Op.MUL(
-        encoded, Op.EXP(256, Op.SUB(54, _ps()))
+        encoded, Op.EXP(256, Op.SUB(32, rlp_len))
     )
 
+    # Store encoded nonce left-aligned (reads byte_length
+    # from offset+64 before it is overwritten below)
+    bytecode += Op.MSTORE(offset + 32, mstore_value)
+
+    # Overwrite byte_length with preimage_size = 22 + rlp_len
+    # EVM evaluates the MLOAD(offset+64) in the expression
+    # before the MSTORE writes to the same address.
+    preimage_size_offset = byte_length_offset
     bytecode += Op.MSTORE(
-        offset + 32,
-        mstore_value,
+        preimage_size_offset,
+        Op.ADD(
+            22,
+            Op.ADD(
+                Op.ADD(_bl(), Op.ISZERO(_bl())),
+                Op.GT(_n(), 127),
+            ),
+        ),
+    )
+
+    def _ps() -> Bytecode:
+        return Op.MLOAD(preimage_size_offset)
+
+    # List prefix = 0xBF + preimage_size
+    bytecode += Op.MSTORE8(
+        offset + 10,
+        Op.ADD(0xBF, _ps()),
         old_memory_size=old_memory_size,
         new_memory_size=new_memory_size,
     )
