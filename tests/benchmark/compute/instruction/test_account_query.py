@@ -13,6 +13,7 @@ Supported Opcodes:
 """
 
 import math
+from enum import Enum, auto
 from typing import Any, Dict, List
 
 import pytest
@@ -32,6 +33,7 @@ from execution_testing import (
     JumpLoopGenerator,
     Op,
     ParameterSet,
+    SequentialLayout,
     TestPhaseManager,
     Transaction,
     While,
@@ -405,6 +407,16 @@ def test_ext_account_query_cold(
     )
 
 
+SEQUENTIAL_BASE_ADDRESS = 0x1000
+
+
+class AddressRange(Enum):
+    """Address generation strategy for account query benchmarks."""
+
+    CREATE2 = auto()
+    SEQUENTIAL = auto()
+
+
 def generate_account_query_params() -> List[ParameterSet]:
     """
     Generate valid parameter combinations for test_account_query.
@@ -469,6 +481,10 @@ def generate_account_query_params() -> List[ParameterSet]:
 
 @pytest.mark.repricing
 @pytest.mark.parametrize(
+    "address_range",
+    [AddressRange.CREATE2, AddressRange.SEQUENTIAL],
+)
+@pytest.mark.parametrize(
     "opcode,access_warm,mem_size,code_size,value_sent",
     generate_account_query_params(),
 )
@@ -483,38 +499,50 @@ def test_account_query(
     value_sent: int,
     gas_benchmark_value: int,
     fixed_opcode_count: int | None,
+    address_range: AddressRange,
 ) -> None:
     """Benchmark scenario of accessing max-code size bytecode."""
     attack_gas_limit = gas_benchmark_value
 
-    # Create the max-sized fork-dependent contract factory.
-    custom_sized_contract_factory = CustomSizedContractFactory(
-        pre=pre, fork=fork, contract_size=code_size
-    )
-    factory_address = custom_sized_contract_factory.address()
-    initcode = custom_sized_contract_factory.initcode
+    # --- Address layout setup ---
+    custom_sized_contract_factory = None
+    if address_range == AddressRange.CREATE2:
+        custom_sized_contract_factory = CustomSizedContractFactory(
+            pre=pre, fork=fork, contract_size=code_size
+        )
+        factory_address = custom_sized_contract_factory.address()
+        initcode = custom_sized_contract_factory.initcode
+        layout = Create2PreimageLayout(
+            factory_address=factory_address,
+            salt=Op.CALLDATALOAD(0),
+            init_code_hash=initcode.keccak256(),
+        )
+        layout_memory_size = 96
+        advance_code = layout.increment_salt_op()
+    else:
+        layout = SequentialLayout(
+            starting_address=Op.ADD(
+                SEQUENTIAL_BASE_ADDRESS, Op.CALLDATALOAD(0)
+            ),
+        )
+        layout_memory_size = 32
+        advance_code = layout.increment_address_op()
 
     # Prepare the attack iterating bytecode.
-    # Setup is just placing the CREATE2 Preimage in memory.
-    create2_preimage = Create2PreimageLayout(
-        factory_address=factory_address,
-        salt=Op.CALLDATALOAD(0),
-        init_code_hash=initcode.keccak256(),
-    )
-    setup_code: Bytecode = create2_preimage
+    setup_code: Bytecode = layout
 
-    if mem_size > 96:
+    if mem_size > layout_memory_size:
         setup_code += Op.MSTORE8(
             mem_size - 1,
             0,
             # Gas accounting
-            old_memory_size=96,
+            old_memory_size=layout_memory_size,
             new_memory_size=mem_size,
         )
 
     if opcode == Op.EXTCODECOPY:
         attack_call = Op.EXTCODECOPY(
-            address=create2_preimage.address_op(),
+            address=layout.address_op(),
             dest_offset=0,
             size=mem_size,
             # Gas accounting
@@ -525,37 +553,37 @@ def test_account_query(
         # CALL and CALLCODE accept value parameter
         attack_call = Op.POP(
             opcode(
-                address=create2_preimage.address_op(),
+                address=layout.address_op(),
                 value=value_sent,
                 args_size=mem_size,
                 # Gas accounting
                 address_warm=access_warm,
-                new_memory_size=max(mem_size, 96),
+                new_memory_size=max(mem_size, layout_memory_size),
             )
         )
     elif opcode in (Op.STATICCALL, Op.DELEGATECALL):
         # STATICCALL and DELEGATECALL don't have value parameter
         attack_call = Op.POP(
             opcode(
-                address=create2_preimage.address_op(),
+                address=layout.address_op(),
                 args_size=mem_size,
                 # Gas accounting
                 address_warm=access_warm,
-                new_memory_size=max(mem_size, 96),
+                new_memory_size=max(mem_size, layout_memory_size),
             )
         )
     else:
         # BALANCE, EXTCODESIZE, EXTCODEHASH
         attack_call = Op.POP(
             opcode(
-                address=create2_preimage.address_op(),
+                address=layout.address_op(),
                 # Gas accounting
                 address_warm=access_warm,
             )
         )
 
     loop_code = While(
-        body=attack_call + create2_preimage.increment_salt_op(),
+        body=attack_call + advance_code,
     )
 
     attack_code = IteratingBytecode(
@@ -571,6 +599,15 @@ def test_account_query(
         del iteration_count
         # We only pass the start iteration index as calldata for this bytecode
         return Hash(start_iteration)
+
+    # --- Target address resolution ---
+    def get_target_address(i: int) -> Address:
+        if address_range == AddressRange.CREATE2:
+            assert custom_sized_contract_factory is not None
+            return custom_sized_contract_factory.created_contract_address(
+                salt=i
+            )
+        return Address(SEQUENTIAL_BASE_ADDRESS + i)
 
     # Access list generator for warm access tests.
     # When access_warm=True, include all contract addresses that will be
@@ -589,9 +626,7 @@ def test_account_query(
             access_list_cache.setdefault(
                 i,
                 AccessList(
-                    address=custom_sized_contract_factory.created_contract_address(
-                        salt=i
-                    ),
+                    address=get_target_address(i),
                     storage_keys=[],
                 ),
             )
@@ -615,23 +650,40 @@ def test_account_query(
             )
         )
 
-    # Deploy num_contracts via multiple txs (each capped by tx gas limit).
+    # --- Contract deployment ---
     post = {}
-    with TestPhaseManager.setup():
-        setup_sender = pre.fund_eoa()
-        contracts_deployment_txs: List[ContractDeploymentTransaction] = []
-        for contract_creating_tx in (
-            custom_sized_contract_factory.transactions_by_total_contract_count(
-                fork=fork,
-                sender=setup_sender,
-                contract_count=num_contracts,
-            )
-        ):
-            contracts_deployment_txs.append(contract_creating_tx)
-            if custom_sized_contract_factory.contract_size > 0:
-                post[contract_creating_tx.deployed_contracts[-1]] = Account(
-                    nonce=1
+    contracts_deployment_txs: List[ContractDeploymentTransaction] = []
+    if address_range == AddressRange.CREATE2:
+        assert custom_sized_contract_factory is not None
+        with TestPhaseManager.setup():
+            setup_sender = pre.fund_eoa()
+            for contract_creating_tx in (
+                custom_sized_contract_factory.transactions_by_total_contract_count(
+                    fork=fork,
+                    sender=setup_sender,
+                    contract_count=num_contracts,
                 )
+            ):
+                contracts_deployment_txs.append(contract_creating_tx)
+                if custom_sized_contract_factory.contract_size > 0:
+                    post[
+                        contract_creating_tx.deployed_contracts[-1]
+                    ] = Account(nonce=1)
+    else:
+        effective_code_size = (
+            fork.max_code_size() if code_size is None else code_size
+        )
+        for i in range(num_contracts):
+            addr = Address(SEQUENTIAL_BASE_ADDRESS + i)
+            if effective_code_size > 0:
+                pre[addr] = Account(
+                    code=Op.STOP
+                    + Op.JUMPDEST * (effective_code_size - 1),
+                    nonce=1,
+                )
+                post[addr] = Account(nonce=1)
+            else:
+                pre[addr] = Account(nonce=1)
 
     with TestPhaseManager.execution():
         attack_sender = pre.fund_eoa()
@@ -659,13 +711,15 @@ def test_account_query(
             )
         total_gas_cost = sum(tx.gas_cost for tx in attack_txs)
 
+    blocks = []
+    if contracts_deployment_txs:
+        blocks.append(Block(txs=contracts_deployment_txs))
+    blocks.append(Block(txs=attack_txs))
+
     benchmark_test(
         pre=pre,
         post=post,
-        blocks=[
-            Block(txs=contracts_deployment_txs),
-            Block(txs=attack_txs),
-        ],
+        blocks=blocks,
         target_opcode=opcode,
         expected_benchmark_gas_used=total_gas_cost,
     )
