@@ -91,6 +91,7 @@ BOUNDARY_ITERATIONS = 10
 @pytest.mark.parametrize(
     "starting_nonce",
     [
+        pytest.param(1, id="nonce_1_initial_value"),
         pytest.param(127, id="nonce_127_max_single_byte"),
         pytest.param(255, id="nonce_max_1_byte_value"),
         pytest.param(256**2 - 1, id="nonce_max_2_byte_value"),
@@ -119,7 +120,6 @@ def test_create_address_nonce_boundary(
     Each boundary value is the last nonce before the RLP encoding
     grows by one byte.
     """
-
     # EVM does not allow nonces higher than 8 bytes, so a PUSH8 will always fit
     nonce_push = Op.PUSH8(starting_nonce)
 
