@@ -192,9 +192,7 @@ class DynamicCallContextTestCases(EnumMeta):
                     f"{call_opcode._name_} upon out of gas during TSTORE. "
                     "Note: Gas passed to sub-call is capped."
                 ),
-                "caller_bytecode": lambda fork,
-                call_opcode=call_opcode,
-                callee_bytecode=callee_bytecode: (
+                "caller_bytecode": lambda fork, call_opcode=call_opcode, callee_bytecode=callee_bytecode: (
                     Op.TSTORE(0, 420)
                     + Op.TSTORE(1, 420)
                     + Op.SSTORE(
