@@ -15,9 +15,6 @@ Supported Opcodes:
 import math
 from typing import Any, Dict, List
 
-from execution_testing.tools.tools_code.generators import (
-    SequentialAddressLayout,
-)
 import pytest
 from execution_testing import (
     AccessList,
@@ -28,7 +25,6 @@ from execution_testing import (
     Block,
     Bytecode,
     Create2PreimageLayout,
-    CreatePreimageLayout,
     ExtCallGenerator,
     Fork,
     Hash,
@@ -41,11 +37,7 @@ from execution_testing import (
     While,
 )
 
-from ..helpers import (
-    AccountQueryMode,
-    ContractDeploymentTransaction,
-    CustomSizedContractFactory,
-)
+from ..helpers import ContractDeploymentTransaction, CustomSizedContractFactory
 
 
 @pytest.mark.repricing(contract_balance=1)
@@ -477,14 +469,6 @@ def generate_account_query_params() -> List[ParameterSet]:
 
 @pytest.mark.repricing
 @pytest.mark.parametrize(
-    "account_query_mode",
-    [
-        AccountQueryMode.CREATE2_FACTORY,
-        AccountQueryMode.CREATE_FACTORY,
-        AccountQueryMode.SEQUENTIAL,
-    ],
-)
-@pytest.mark.parametrize(
     "opcode,access_warm,mem_size,code_size,value_sent",
     generate_account_query_params(),
 )
@@ -499,7 +483,6 @@ def test_account_query(
     value_sent: int,
     gas_benchmark_value: int,
     fixed_opcode_count: int | None,
-    account_query_mode: AccountQueryMode,
 ) -> None:
     """Benchmark scenario of accessing max-code size bytecode."""
     attack_gas_limit = gas_benchmark_value
@@ -513,21 +496,12 @@ def test_account_query(
 
     # Prepare the attack iterating bytecode.
     # Setup is just placing the CREATE2 Preimage in memory.
-    if account_query_mode == AccountQueryMode.CREATE2_FACTORY:
-        address_retriever = Create2PreimageLayout(
-            factory_address=factory_address,
-            salt=Op.CALLDATALOAD(0),
-            init_code_hash=initcode.keccak256(),
-        )
-    elif account_query_mode == AccountQueryMode.CREATE_FACTORY:
-        address_retriever = CreatePreimageLayout(
-            sender_address=factory_address,
-            nonce=1,
-        )
-    else:
-        address_retriever = SequentialAddressLayout()
-
-    setup_code: Bytecode = address_retriever
+    create2_preimage = Create2PreimageLayout(
+        factory_address=factory_address,
+        salt=Op.CALLDATALOAD(0),
+        init_code_hash=initcode.keccak256(),
+    )
+    setup_code: Bytecode = create2_preimage
 
     if mem_size > 96:
         setup_code += Op.MSTORE8(
@@ -540,7 +514,7 @@ def test_account_query(
 
     if opcode == Op.EXTCODECOPY:
         attack_call = Op.EXTCODECOPY(
-            address=address_retriever.address_op(),
+            address=create2_preimage.address_op(),
             dest_offset=0,
             size=mem_size,
             # Gas accounting
@@ -551,7 +525,7 @@ def test_account_query(
         # CALL and CALLCODE accept value parameter
         attack_call = Op.POP(
             opcode(
-                address=address_retriever.address_op(),
+                address=create2_preimage.address_op(),
                 value=value_sent,
                 args_size=mem_size,
                 # Gas accounting
@@ -563,7 +537,7 @@ def test_account_query(
         # STATICCALL and DELEGATECALL don't have value parameter
         attack_call = Op.POP(
             opcode(
-                address=address_retriever.address_op(),
+                address=create2_preimage.address_op(),
                 args_size=mem_size,
                 # Gas accounting
                 address_warm=access_warm,
@@ -574,14 +548,14 @@ def test_account_query(
         # BALANCE, EXTCODESIZE, EXTCODEHASH
         attack_call = Op.POP(
             opcode(
-                address=address_retriever.address_op(),
+                address=create2_preimage.address_op(),
                 # Gas accounting
                 address_warm=access_warm,
             )
         )
 
     loop_code = While(
-        body=attack_call + address_retriever.increment_salt_op(),
+        body=attack_call + create2_preimage.increment_salt_op(),
     )
 
     attack_code = IteratingBytecode(
