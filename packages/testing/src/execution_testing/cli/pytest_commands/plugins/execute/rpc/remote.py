@@ -13,6 +13,7 @@ from execution_testing.test_types.chain_config_types import (
 
 from ..pre_alloc import AddressStubs
 from .chain_builder_eth_rpc import ChainBuilderEthRPC, TestingRPC
+from .payload_recorder import PayloadRecorder
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -180,6 +181,7 @@ def eth_rpc(
     session_temp_folder: Path,
     max_transactions_per_batch: int | None,
     use_testing_build_block: bool,
+    payload_recorder: PayloadRecorder | None,
 ) -> EthRPC:
     """Initialize ethereum RPC client for the execution client under test."""
     tx_wait_timeout = request.config.getoption("tx_wait_timeout")
@@ -207,4 +209,5 @@ def eth_rpc(
         transaction_wait_timeout=tx_wait_timeout,
         max_transactions_per_batch=max_transactions_per_batch,
         testing_rpc=testing_rpc,
+        payload_recorder=payload_recorder,
     )

@@ -15,6 +15,7 @@ from execution_testing.base_types import (
     Bytes,
     Hash,
     HexNumber,
+    to_json,
 )
 from execution_testing.forks import Fork
 from execution_testing.rpc import EngineRPC, TestingRPC
@@ -26,6 +27,8 @@ from execution_testing.rpc.rpc_types import (
     PayloadStatusEnum,
     TransactionProtocol,
 )
+
+from .payload_recorder import PayloadRecorder
 
 
 class ChainBuilderEthRPC(BaseEthRPC, namespace="eth"):
@@ -53,6 +56,7 @@ class ChainBuilderEthRPC(BaseEthRPC, namespace="eth"):
         transaction_wait_timeout: int = 60,
         max_transactions_per_batch: int | None = None,
         testing_rpc: TestingRPC | None = None,
+        payload_recorder: PayloadRecorder | None = None,
     ):
         """Initialize the Ethereum RPC client for the hive simulator."""
         super().__init__(
@@ -67,6 +71,7 @@ class ChainBuilderEthRPC(BaseEthRPC, namespace="eth"):
         )
         self.get_payload_wait_time = get_payload_wait_time
         self.testing_rpc = testing_rpc
+        self.payload_recorder = payload_recorder
 
         # Send initial forkchoice updated only if we are the first worker
         base_name = "eth_rpc_forkchoice_updated"
@@ -200,6 +205,20 @@ class ChainBuilderEthRPC(BaseEthRPC, namespace="eth"):
         assert response.payload_status.status == PayloadStatusEnum.VALID, (
             "Payload was invalid"
         )
+
+        if self.payload_recorder is not None:
+            self.payload_recorder.record_payload_pair(
+                new_payload_method=(
+                    f"engine_newPayloadV{new_payload_version}"
+                ),
+                new_payload_params=[
+                    to_json(a) for a in new_payload_args
+                ],
+                fcu_method=(
+                    f"engine_forkchoiceUpdatedV{fcu_version}"
+                ),
+                fcu_params=[to_json(new_forkchoice_state), None],
+            )
 
     def generate_block(self: "ChainBuilderEthRPC") -> None:
         """Generate a block using the Engine API."""

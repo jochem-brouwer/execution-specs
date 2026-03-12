@@ -2,6 +2,7 @@
 Test execution plugin for pytest, to run Ethereum tests on live networks.
 """
 
+import contextlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,8 +30,20 @@ from ..shared.helpers import (
 )
 from ..spec_version_checker.spec_version_checker import EIPSpecTestItem
 from .pre_alloc import Alloc
+from .rpc.payload_recorder import PayloadRecorder
 
 logger = get_logger(__name__)
+
+
+def _recording_ctx(
+    recorder: PayloadRecorder | None,
+    phase: str,
+    scenario: str,
+) -> contextlib.AbstractContextManager:
+    """Return a recording context if *recorder* is active, else a no-op."""
+    if recorder is None:
+        return contextlib.nullcontext()
+    return recorder.recording_context(phase, scenario)
 
 
 def default_html_report_file_path() -> str:
@@ -168,6 +181,19 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Only for clients that implement this endpoint."
         ),
     )
+    execute_group.addoption(
+        "--record-payloads",
+        action="store",
+        dest="record_payloads",
+        default=None,
+        nargs="?",
+        const="./eest_stateful/",
+        help=(
+            "Record engine API payloads to disk for offline replay. "
+            "Requires --use-testing-build-block. "
+            "Optional: output directory (default: ./eest_stateful/)."
+        ),
+    )
 
     report_group = parser.getgroup(
         "tests", "Arguments defining html report behavior"
@@ -210,6 +236,13 @@ def pytest_configure(config: pytest.Config) -> None:
 
     if is_help_or_collectonly_mode(config):
         return
+
+    record_payloads = config.getoption("record_payloads")
+    if record_payloads is not None:
+        if not config.getoption("use_testing_build_block"):
+            pytest.exit(
+                "--record-payloads requires --use-testing-build-block"
+            )
 
     if (
         config.getoption("disable_html")
@@ -355,6 +388,17 @@ def use_testing_build_block(
 ) -> bool:
     """Return whether to use testing_buildBlockV1 for block building."""
     return request.config.getoption("use_testing_build_block")
+
+
+@pytest.fixture(scope="session")
+def payload_recorder(
+    request: pytest.FixtureRequest,
+) -> PayloadRecorder | None:
+    """Return the payload recorder if --record-payloads was specified."""
+    record_path = request.config.getoption("record_payloads")
+    if record_path is None:
+        return None
+    return PayloadRecorder(output_dir=Path(record_path))
 
 
 @pytest.fixture(scope="session")
@@ -648,6 +692,7 @@ def base_test_parametrizer(cls: Type[BaseTest]) -> Any:
         gas_limit_accumulator: GasInfoAccumulator,
         is_tx_gas_heavy_test: bool,
         is_exception_test: bool,
+        payload_recorder: PayloadRecorder | None,
     ) -> Type[BaseTest]:
         """
         Fixture used to instantiate an auto-fillable BaseTest object from
@@ -734,8 +779,19 @@ def base_test_parametrizer(cls: Type[BaseTest]) -> Any:
                     logger.info(f"Gas consumption: {gas_consumption}")
                     return
 
+                scenario = (
+                    PayloadRecorder.sanitize_scenario_name(
+                        request.node.nodeid
+                    )
+                    if payload_recorder is not None
+                    else ""
+                )
+
                 # send the funds to the required sender accounts
-                pre.send_pending_transactions()
+                with _recording_ctx(
+                    payload_recorder, "setup", scenario
+                ):
+                    pre.send_pending_transactions()
 
                 if pre._deployed_contracts:
                     contract_alloc = BaseAlloc(
@@ -767,12 +823,15 @@ def base_test_parametrizer(cls: Type[BaseTest]) -> Any:
                     [str(eoa) for eoa in pre._funded_eoa]
                 )
 
-                execute_result = execute.execute(
-                    fork=fork,
-                    eth_rpc=eth_rpc,
-                    engine_rpc=engine_rpc,
-                    request=request,
-                )
+                with _recording_ctx(
+                    payload_recorder, "testing", scenario
+                ):
+                    execute_result = execute.execute(
+                        fork=fork,
+                        eth_rpc=eth_rpc,
+                        engine_rpc=engine_rpc,
+                        request=request,
+                    )
                 self.validate_benchmark_gas(
                     benchmark_gas_used=execute_result.benchmark_gas_used,
                     gas_benchmark_value=gas_benchmark_value,

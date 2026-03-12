@@ -1,5 +1,6 @@
 """Sender mutex class that allows sending transactions one at a time."""
 
+import contextlib
 import json
 import time
 from pathlib import Path
@@ -18,6 +19,8 @@ from execution_testing.test_types import (
     Transaction,
     TransactionTestMetadata,
 )
+
+from .rpc.payload_recorder import PayloadRecorder
 
 logger = get_logger(__name__)
 
@@ -244,6 +247,7 @@ def session_worker_key(
     sender_funding_transactions_gas_price: int,
     sender_fund_refund_gas_limit: int,
     dry_run: bool,
+    payload_recorder: PayloadRecorder | None,
 ) -> Generator[EOA, None, None]:
     """
     Get the key for this worker in this session that will be the account
@@ -315,7 +319,14 @@ def session_worker_key(
                 fund_txs.append(fund_tx)
 
             if not dry_run:
-                eth_rpc.send_wait_transactions(fund_txs)
+                if payload_recorder is not None:
+                    ctx = payload_recorder.recording_context(
+                        "setup", "global"
+                    )
+                else:
+                    ctx = contextlib.nullcontext()
+                with ctx:
+                    eth_rpc.send_wait_transactions(fund_txs)
                 logger.info("All worker funding transactions confirmed")
             else:
                 logger.info("Dry run: skipping funding transaction send")
@@ -402,7 +413,12 @@ def session_worker_key(
     logger.info(
         f"Sending and waiting for refund transaction: {refund_tx.hash}"
     )
-    eth_rpc.send_wait_transactions([refund_tx])
+    if payload_recorder is not None:
+        ctx = payload_recorder.recording_context("cleanup", "global")
+    else:
+        ctx = contextlib.nullcontext()
+    with ctx:
+        eth_rpc.send_wait_transactions([refund_tx])
     logger.info(f"Refund transaction confirmed: {refund_tx.hash}")
 
 
