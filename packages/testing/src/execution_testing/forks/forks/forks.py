@@ -977,6 +977,14 @@ class Frontier(BaseFork, solc_name="homestead"):
         return False
 
     @classmethod
+    def header_slot_number_required(
+        cls, *, block_number: int = 0, timestamp: int = 0
+    ) -> bool:
+        """Pre-Amsterdam forks have no slot number in header."""
+        del block_number, timestamp
+        return False
+
+    @classmethod
     def engine_new_payload_version(
         cls, *, block_number: int = 0, timestamp: int = 0
     ) -> Optional[int]:
@@ -3357,6 +3365,14 @@ class Amsterdam(BPO2):
         """
         From Amsterdam, header must contain block access list hash (EIP-7928).
         """
+        del block_number, timestamp
+        return True
+
+    @classmethod
+    def header_slot_number_required(
+        cls, *, block_number: int = 0, timestamp: int = 0
+    ) -> bool:
+        """Amsterdam requires slot_number in header (EIP-7843)."""
         del block_number, timestamp
         return True
 
