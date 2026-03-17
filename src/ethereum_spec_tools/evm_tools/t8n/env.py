@@ -11,6 +11,7 @@ from ethereum_types.bytes import Bytes8, Bytes20, Bytes32, Bytes256
 from ethereum_types.numeric import U64, U256, Uint
 
 from ethereum.crypto.hash import Hash32, keccak256
+from ethereum.utils import has_field
 from ethereum.utils.byte import left_pad_zero_bytes
 from ethereum.utils.hexadecimal import hex_to_bytes
 
@@ -147,6 +148,9 @@ class Env:
 
         if t8n.fork.has_block_access_list_hash:
             arguments["block_access_list_hash"] = Hash32(b"\0" * 32)
+
+        if has_field(t8n.fork.Header, "slot_number"):
+            arguments["slot_number"] = U64(0)
 
         parent_header = t8n.fork.Header(**arguments)
 

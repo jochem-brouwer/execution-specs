@@ -288,6 +288,9 @@ class Result(CamelModel):
     requests: List[Bytes] | None = None
     block_access_list: BlockAccessList | None = None
     block_access_list_hash: Hash | None = None
+    slot_number: HexNumber | None = Field(
+        None, alias="currentSlotNumber"
+    )
     block_exception: Annotated[
         BlockExceptionWithMessage | UndefinedException | None,
         ExceptionMapperValidator,

@@ -209,7 +209,7 @@ def add_genesis_block(
             chain.state,
             address,
             hardfork.Account(
-                Uint(int(account.get("nonce", "0"))),
+                hex_to_uint(account.get("nonce", "0x0")),
                 hex_or_base_10_str_to_u256(account.get("balance", 0)),
                 hex_to_bytes(account.get("code", "0x")),
             ),
@@ -257,10 +257,18 @@ def add_genesis_block(
         fields["parent_beacon_block_root"] = Hash32(b"\0" * 32)
 
     if has_field(hardfork.Header, "requests_hash"):
-        fields["requests_hash"] = Hash32(b"\0" * 32)
+        # SHA-256 of empty string per EIP-7685
+        fields["requests_hash"] = Hash32(
+            bytes.fromhex(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            )
+        )
 
     if has_field(hardfork.Header, "block_access_list_hash"):
         fields["block_access_list_hash"] = keccak256(rlp.encode([]))
+
+    if has_field(hardfork.Header, "slot_number"):
+        fields["slot_number"] = U64(0)
 
     genesis_header = hardfork.Header(**fields)
 

@@ -254,6 +254,14 @@ class Header:
     [cbalh]: ref:ethereum.forks.amsterdam.block_access_lists.rlp_utils.compute_block_access_list_hash
     """  # noqa: E501
 
+    slot_number: U64
+    """
+    The beacon chain slot number corresponding to this execution block.
+    Introduced in [EIP-7843].
+
+    [EIP-7843]: https://eips.ethereum.org/EIPS/eip-7843
+    """
+
 
 @slotted_freezable
 @dataclass
