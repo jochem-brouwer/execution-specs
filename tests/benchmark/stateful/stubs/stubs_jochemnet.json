@@ -1,0 +1,42 @@
+{
+  "test_sload_empty_erc20_balanceof_XEN": {
+    "addr": "0x06450dEe7FD2Fb8E39061434BAbCFC05599a6Fb8"
+  },
+  "test_sload_empty_erc20_balanceof_USDC": {
+    "addr": "0xA0b86991C6218B36c1d19D4a2E9Eb0CE3606EB48"
+  },
+  "test_sload_empty_erc20_balanceof_ARB": {
+    "addr": "0xad0c361ef902a7d9851ca7dcc85535da2d3c6fc7"
+  },
+  "test_sload_empty_erc20_balanceof_HST": {
+    "addr": "0x2e2a539285ce690e4c6bddd42deb7e37bdde9500"
+  },
+  "test_sstore_erc20_approve_XEN": {
+    "addr": "0x06450dEe7FD2Fb8E39061434BAbCFC05599a6Fb8"
+  },
+  "test_sstore_erc20_approve_USDC": {
+    "addr": "0xA0b86991C6218B36c1d19D4a2E9Eb0CE3606EB48"
+  },
+  "test_sstore_erc20_approve_ARB": {
+    "addr": "0xad0c361ef902a7d9851ca7dcc85535da2d3c6fc7"
+  },
+  "test_sstore_erc20_approve_HST": {
+    "addr": "0x2e2a539285ce690e4c6bddd42deb7e37bdde9500"
+  },
+  "test_mixed_sload_sstore_XEN": {
+    "addr": "0x06450dEe7FD2Fb8E39061434BAbCFC05599a6Fb8"
+  },
+  "test_mixed_sload_sstore_USDC": {
+    "addr": "0xA0b86991C6218B36c1d19D4a2E9Eb0CE3606EB48"
+  },
+  "test_mixed_sload_sstore_ARB": {
+    "addr": "0xad0c361ef902a7d9851ca7dcc85535da2d3c6fc7"
+  },
+  "test_mixed_sload_sstore_HST": {
+    "addr": "0x2e2a539285ce690e4c6bddd42deb7e37bdde9500"
+  },
+  "bloated_eoa_10GB": {
+    "addr": "0x87a6314da5ac8832f6e7a176c8fb133b19f5be04",
+    "pkey": "0x4da32d29f6dcffa26e09dc4e102033f2d105de1444fb893493ae703289275e0e"
+  }
+}
