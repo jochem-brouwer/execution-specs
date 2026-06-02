@@ -13,6 +13,7 @@ from typing import Any, Callable, Generator, List
 
 import pytest
 from execution_testing import (
+    DETERMINISTIC_FACTORY_ADDRESS,
     EOA,
     AccessList,
     Address,
@@ -25,7 +26,7 @@ from execution_testing import (
     Block,
     BlockAccessListExpectation,
     Bytecode,
-    CreatePreimageLayout,
+    Create2PreimageLayout,
     Fork,
     Hash,
     IteratingBytecode,
@@ -1596,16 +1597,14 @@ def test_account_access(
     # the previous one left off instead of re-targeting the same accounts.
     calldataload_start = Op.CALLDATALOAD(0)
     if account_mode == AccountMode.EXISTING_CONTRACT:
-        # Use Bittrex Controller as target. Created 1586350 contracts,
-        # which cannot selfdestruct, so guaranteed to be on-chain.
-        # This is safe for a gas benchmark up to 300M. (300_000_000 / 2000)
-        # (2000 is the min cost to target a cold address)
-        target_address = Address(0xA3C1E324CA1CE40DB73ED6026C4A177F099B5770)
-        address_retriever = CreatePreimageLayout(
-            sender_address=target_address,
-            nonce=Op.ADD(1, calldataload_start),
+        # initcode returns a single zero byte (STOP) as the runtime.
+        init_code = Op.PUSH1(1) + Op.PUSH1(0) + Op.RETURN
+        address_retriever = Create2PreimageLayout(
+            factory_address=DETERMINISTIC_FACTORY_ADDRESS,
+            salt=calldataload_start,
+            init_code_hash=keccak256(bytes(init_code)),
         )
-        increment_op = address_retriever.increment_nonce_op()
+        increment_op = address_retriever.increment_salt_op()
     elif account_mode == AccountMode.EXISTING_EOA:
         # Spamoor EOA creator (https://github.com/CPerezz/spamoor/pull/12)
         # created these accounts on bloatnet with these values (are also the
@@ -1689,13 +1688,9 @@ def test_account_access(
     )
 
     # Calldata generator for each transaction of the iterating bytecode.
-    # Start from 1 to skip the Bittrex Controller's nonce=1 contract
-    # which has a non-payable fallback that reverts when receiving value.
-    calldata_offset = 1 if account_mode == AccountMode.EXISTING_CONTRACT else 0
-
     def calldata(iteration_count: int, start_iteration: int) -> bytes:
         del iteration_count
-        return Hash(start_iteration + calldata_offset)
+        return Hash(start_iteration)
 
     attack_address = pre.deploy_contract(code=attack_code, balance=10**21)
 
