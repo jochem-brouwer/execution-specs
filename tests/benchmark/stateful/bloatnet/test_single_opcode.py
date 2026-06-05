@@ -1544,6 +1544,16 @@ def test_storage_sload_same_key_benchmark(
     )
 
 
+class AccountMode(Enum):
+    """Target Account Mode."""
+
+    EXISTING_CONTRACT_MINIMAL = auto()
+    EXISTING_CONTRACT_SAME = auto()
+    EXISTING_CONTRACT_DIFF = auto()
+    EXISTING_EOA = auto()
+    NON_EXISTING_ACCOUNT = auto()
+
+
 def account_access_params() -> list:
     """Generate (opcode, value_sent, account_mode) triples."""
     params = []
@@ -1558,7 +1568,9 @@ def account_access_params() -> list:
 
     for op in [Op.EXTCODECOPY, Op.EXTCODESIZE, Op.EXTCODEHASH]:
         for mode in [
-            AccountMode.EXISTING_CONTRACT,
+            AccountMode.EXISTING_CONTRACT_MINIMAL,
+            AccountMode.EXISTING_CONTRACT_SAME,
+            AccountMode.EXISTING_CONTRACT_DIFF,
             AccountMode.NON_EXISTING_ACCOUNT,
         ]:
             params.append(pytest.param(op, 0, mode))
@@ -1566,12 +1578,27 @@ def account_access_params() -> list:
     return params
 
 
-class AccountMode(Enum):
-    """Target Account Mode."""
+def build_existing_contract_initcode(
+    fork: Fork, account_mode: AccountMode
+) -> Bytecode:
+    """
+    Build the initcode for an existing contract.
+    """
+    max_code_size = fork.max_code_size()
 
-    EXISTING_CONTRACT = auto()
-    EXISTING_EOA = auto()
-    NON_EXISTING_ACCOUNT = auto()
+    # MCOPY fills MEM[0:0x8000] with JUMPDEST.
+    # Runtime only uses MEM[0:0x6000].
+    code = Op.MSTORE(0, bytes(Op.JUMPDEST * 32))
+    for size in (1 << s for s in range(5, 15)):
+        code += Op.MCOPY(size, 0, size)
+
+    if account_mode == AccountMode.EXISTING_CONTRACT_DIFF:
+        code += Op.MSTORE(0, Op.ADDRESS)
+    else:
+        code += Op.MSTORE8(0, 0)
+    code += Op.RETURN(0, max_code_size)
+
+    return code
 
 
 @pytest.mark.repricing
@@ -1596,9 +1623,20 @@ def test_account_access(
     # split across gas limits, each transaction continues from where
     # the previous one left off instead of re-targeting the same accounts.
     calldataload_start = Op.CALLDATALOAD(0)
-    if account_mode == AccountMode.EXISTING_CONTRACT:
+    if account_mode == AccountMode.EXISTING_CONTRACT_MINIMAL:
         # initcode returns a single zero byte (STOP) as the runtime.
         init_code = Op.PUSH1(1) + Op.PUSH1(0) + Op.RETURN
+        address_retriever = Create2PreimageLayout(
+            factory_address=DETERMINISTIC_FACTORY_ADDRESS,
+            salt=calldataload_start,
+            init_code_hash=keccak256(bytes(init_code)),
+        )
+        increment_op = address_retriever.increment_salt_op()
+    elif account_mode in (
+        AccountMode.EXISTING_CONTRACT_SAME,
+        AccountMode.EXISTING_CONTRACT_DIFF,
+    ):
+        init_code = build_existing_contract_initcode(fork, account_mode)
         address_retriever = Create2PreimageLayout(
             factory_address=DETERMINISTIC_FACTORY_ADDRESS,
             salt=calldataload_start,

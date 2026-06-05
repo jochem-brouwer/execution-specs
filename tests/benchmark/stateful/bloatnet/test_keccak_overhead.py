@@ -1,5 +1,7 @@
 """Keccak overhead baseline for the account-access benchmark."""
 
+from enum import Enum, auto
+
 import pytest
 from execution_testing import (
     DETERMINISTIC_FACTORY_ADDRESS,
@@ -23,17 +25,61 @@ REFERENCE_SPEC_GIT_PATH = "DUMMY/bloatnet.md"
 REFERENCE_SPEC_VERSION = "1.0"
 
 
-def account_access_keccak_params() -> list:
-    """Mirror test_account_access's EXISTING_CONTRACT (opcode, value) set."""
+def account_access_params() -> list:
+    """Generate (opcode, value_sent, account_mode) triples."""
     params = []
-    for op in [Op.CALL, Op.CALLCODE]:
-        params.append(pytest.param(op, 0))
-        params.append(pytest.param(op, 1))
-    for op in [Op.BALANCE, Op.STATICCALL, Op.DELEGATECALL]:
-        params.append(pytest.param(op, 0))
+
+    for mode in AccountMode:
+        for op in [Op.CALL, Op.CALLCODE]:
+            params.append(pytest.param(op, 0, mode))
+            params.append(pytest.param(op, 1, mode))
+
+        for op in [Op.BALANCE, Op.STATICCALL, Op.DELEGATECALL]:
+            params.append(pytest.param(op, 0, mode))
+
     for op in [Op.EXTCODECOPY, Op.EXTCODESIZE, Op.EXTCODEHASH]:
-        params.append(pytest.param(op, 0))
+        for mode in [
+            AccountMode.EXISTING_CONTRACT_MINIMAL,
+            AccountMode.EXISTING_CONTRACT_SAME,
+            AccountMode.EXISTING_CONTRACT_DIFF,
+            AccountMode.NON_EXISTING_ACCOUNT,
+        ]:
+            params.append(pytest.param(op, 0, mode))
+
     return params
+
+
+class AccountMode(Enum):
+    """Target Account Mode."""
+
+    EXISTING_CONTRACT_MINIMAL = auto()
+    EXISTING_CONTRACT_SAME = auto()
+    EXISTING_CONTRACT_DIFF = auto()
+    EXISTING_EOA = auto()
+    NON_EXISTING_ACCOUNT = auto()
+
+
+def build_existing_contract_initcode(
+    fork: Fork, account_mode: AccountMode
+) -> Bytecode:
+    """
+    Build the initcode for an existing contract.
+    """
+    max_code_size = fork.max_code_size()
+
+    # MCOPY fills MEM[0:0x8000] with JUMPDEST.
+    # Runtime only uses MEM[0:0x6000].
+    code = Op.MSTORE(0, bytes(Op.JUMPDEST * 32))
+    for size in (1 << s for s in range(5, 15)):
+        code += Op.MCOPY(size, 0, size)
+
+    if account_mode == AccountMode.EXISTING_CONTRACT_DIFF:
+        code += Op.MSTORE(0, Op.ADDRESS)
+    else:
+        code += Op.MSTORE8(0, 0)
+    code += Op.RETURN(0, max_code_size)
+
+    return code
 
 
 def _account_access_loop(
@@ -90,7 +136,9 @@ def _account_access_loop(
 
 @pytest.mark.repricing
 @pytest.mark.parametrize("cache_strategy", list(CacheStrategy))
-@pytest.mark.parametrize("opcode,value_sent", account_access_keccak_params())
+@pytest.mark.parametrize(
+    "opcode,value_sent,account_mode", account_access_params()
+)
 def test_account_access_keccak(
     benchmark_test: BenchmarkTestFiller,
     pre: Alloc,
@@ -98,6 +146,7 @@ def test_account_access_keccak(
     opcode: Op,
     value_sent: int,
     gas_benchmark_value: int,
+    account_mode: AccountMode,
     cache_strategy: CacheStrategy,
 ) -> None:
     """
@@ -111,11 +160,19 @@ def test_account_access_keccak(
     """
     calldataload_start = Op.CALLDATALOAD(0)
 
-    init_code = Op.PUSH1(1) + Op.PUSH1(0) + Op.RETURN
+    initcode = Bytecode()
+    if account_mode == AccountMode.EXISTING_CONTRACT_MINIMAL:
+        initcode += Op.PUSH1(1) + Op.PUSH1(0) + Op.RETURN
+    elif account_mode in (
+        AccountMode.EXISTING_CONTRACT_SAME,
+        AccountMode.EXISTING_CONTRACT_DIFF,
+    ):
+        initcode += build_existing_contract_initcode(fork, account_mode)
+
     address_retriever = Create2PreimageLayout(
         factory_address=DETERMINISTIC_FACTORY_ADDRESS,
         salt=calldataload_start,
-        init_code_hash=keccak256(bytes(init_code)),
+        init_code_hash=keccak256(bytes(initcode)),
     )
     increment_op = address_retriever.increment_salt_op()
 
