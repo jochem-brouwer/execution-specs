@@ -1,16 +1,4 @@
-"""
-Benchmark operations that require querying the account state, either on the
-current executing account or on a target account.
-
-Supported Opcodes:
-- SELFBALANCE
-- CODESIZE
-- CODECOPY
-- EXTCODESIZE
-- EXTCODEHASH
-- EXTCODECOPY
-- BALANCE
-"""
+"""Benchmark operations that query the state of a target account."""
 
 from enum import Enum, auto
 from typing import Any
@@ -21,7 +9,6 @@ from execution_testing import (
     Account,
     Alloc,
     BenchmarkTestFiller,
-    Block,
     Bytecode,
     Create2PreimageLayout,
     Fork,
@@ -36,7 +23,10 @@ from execution_testing import (
     keccak256,
 )
 
-from tests.benchmark.stateful.helpers import CacheStrategy
+from tests.benchmark.stateful.helpers import (
+    CacheStrategy,
+    build_cache_strategy_blocks,
+)
 
 
 @pytest.mark.repricing(
@@ -132,18 +122,27 @@ class AccountMode(Enum):
     EXISTING_EOA = auto()
     NON_EXISTING_ACCOUNT = auto()
 
+    @property
+    def derives_address_via_create2(self) -> bool:
+        """Whether the target address is derived via CREATE2."""
+        return self in (
+            AccountMode.EXISTING_CONTRACT_MINIMAL,
+            AccountMode.EXISTING_CONTRACT_SAME,
+            AccountMode.EXISTING_CONTRACT_DIFF,
+        )
+
 
 def account_access_params() -> list:
-    """Generate (opcode, value_sent, account_mode) triples."""
-    params = []
+    """Generate (opcode, value_sent, account_mode, overhead_baseline)."""
+    combos = []
 
     for mode in AccountMode:
         for op in [Op.CALL, Op.CALLCODE]:
-            params.append(pytest.param(op, 0, mode))
-            params.append(pytest.param(op, 1, mode))
+            combos.append((op, 0, mode))
+            combos.append((op, 1, mode))
 
         for op in [Op.BALANCE, Op.STATICCALL, Op.DELEGATECALL]:
-            params.append(pytest.param(op, 0, mode))
+            combos.append((op, 0, mode))
 
     for op in [Op.EXTCODECOPY, Op.EXTCODESIZE, Op.EXTCODEHASH]:
         for mode in [
@@ -152,8 +151,13 @@ def account_access_params() -> list:
             AccountMode.EXISTING_CONTRACT_DIFF,
             AccountMode.NON_EXISTING_ACCOUNT,
         ]:
-            params.append(pytest.param(op, 0, mode))
+            combos.append((op, 0, mode))
 
+    params = []
+    for op, value_sent, mode in combos:
+        params.append(pytest.param(op, value_sent, mode, False))
+        if mode.derives_address_via_create2:
+            params.append(pytest.param(op, value_sent, mode, True))
     return params
 
 
@@ -183,7 +187,7 @@ def build_existing_contract_initcode(
 @pytest.mark.repricing
 @pytest.mark.parametrize("cache_strategy", list(CacheStrategy))
 @pytest.mark.parametrize(
-    "opcode,value_sent,account_mode", account_access_params()
+    "opcode,value_sent,account_mode,overhead_baseline", account_access_params()
 )
 def test_account_access(
     benchmark_test: BenchmarkTestFiller,
@@ -194,28 +198,19 @@ def test_account_access(
     gas_benchmark_value: int,
     fixed_opcode_count: int | None,
     account_mode: AccountMode,
+    overhead_baseline: bool,
     cache_strategy: CacheStrategy,
 ) -> None:
     """Benchmark account access with caching strategies."""
     address_retriever: Bytecode
-    # Read start_iteration from calldata so that when transactions are
-    # split across gas limits, each transaction continues from where
-    # the previous one left off instead of re-targeting the same accounts.
     calldataload_start = Op.CALLDATALOAD(0)
-    if account_mode == AccountMode.EXISTING_CONTRACT_MINIMAL:
+    if account_mode.derives_address_via_create2:
         # initcode returns a single zero byte (STOP) as the runtime.
-        init_code = Op.PUSH1(1) + Op.PUSH1(0) + Op.RETURN
-        address_retriever = Create2PreimageLayout(
-            factory_address=DETERMINISTIC_FACTORY_ADDRESS,
-            salt=calldataload_start,
-            init_code_hash=keccak256(bytes(init_code)),
+        init_code = (
+            Op.RETURN(Op.PUSH1(0), Op.PUSH1(1))
+            if account_mode == AccountMode.EXISTING_CONTRACT_MINIMAL
+            else build_existing_contract_initcode(fork, account_mode)
         )
-        increment_op = address_retriever.increment_salt_op()
-    elif account_mode in (
-        AccountMode.EXISTING_CONTRACT_SAME,
-        AccountMode.EXISTING_CONTRACT_DIFF,
-    ):
-        init_code = build_existing_contract_initcode(fork, account_mode)
         address_retriever = Create2PreimageLayout(
             factory_address=DETERMINISTIC_FACTORY_ADDRESS,
             salt=calldataload_start,
@@ -224,8 +219,6 @@ def test_account_access(
         increment_op = address_retriever.increment_salt_op()
     elif account_mode == AccountMode.EXISTING_EOA:
         # Spamoor EOA creator (https://github.com/CPerezz/spamoor/pull/12)
-        # created these accounts on bloatnet with these values (are also the
-        # defaults of SequentialAddressLayout)
         address_retriever = SequentialAddressLayout(
             starting_address=Op.ADD(0x1000, calldataload_start),
             increment=1,
@@ -237,8 +230,6 @@ def test_account_access(
             increment=1,
         )
         increment_op = address_retriever.increment_address_op()
-
-    setup_code: Bytecode = address_retriever
 
     cache_op = (
         Op.POP(
@@ -273,16 +264,8 @@ def test_account_access(
                 and account_mode == AccountMode.NON_EXISTING_ACCOUNT,
             )
         )
-    elif opcode in (Op.STATICCALL, Op.DELEGATECALL):
-        attack_call = Op.POP(
-            opcode(
-                address=address_retriever.address_op(),
-                # Gas accounting
-                address_warm=access_warm,
-            )
-        )
     else:
-        # BALANCE, EXTCODESIZE, EXTCODEHASH
+        # BALANCE, STATICCALL, DELEGATECALL, EXTCODESIZE, EXTCODEHASH
         attack_call = Op.POP(
             opcode(
                 address=address_retriever.address_op(),
@@ -297,10 +280,8 @@ def test_account_access(
     )
 
     attack_code = IteratingBytecode(
-        setup=setup_code,
+        setup=address_retriever,
         iterating=loop_code,
-        # Since the target contract is guaranteed to have a STOP as the first
-        # instruction, we can use a STOP as the iterating subcall code.
         iterating_subcall=Op.STOP,
     )
 
@@ -309,18 +290,44 @@ def test_account_access(
         del iteration_count
         return Hash(start_iteration)
 
-    attack_address = pre.deploy_contract(code=attack_code, balance=10**21)
+    run_code = attack_code
+    target_opcode = opcode
+
+    if overhead_baseline:
+        keccak_op = Op.POP(address_retriever.address_op())
+        if cache_strategy == CacheStrategy.CACHE_TX:
+            keccak_op = keccak_op * 2
+
+        run_code = IteratingBytecode(
+            setup=address_retriever,
+            iterating=While(body=keccak_op + increment_op),
+        )
+        target_opcode = Op.SHA3
+
+    total_iterations = None
+    if fixed_opcode_count is not None:
+        total_iterations = int(fixed_opcode_count * 1000)
+    elif overhead_baseline:
+        total_iterations = sum(
+            attack_code.tx_iterations_by_gas_limit(
+                fork=fork,
+                gas_limit=gas_benchmark_value,
+                calldata=calldata,
+            )
+        )
+
+    attack_address = pre.deploy_contract(code=run_code, balance=10**21)
 
     post: dict = {}
     cache_txs = []
 
     with TestPhaseManager.execution():
         attack_sender = pre.fund_eoa()
-        if fixed_opcode_count is not None:
+        if total_iterations is not None:
             attack_txs = list(
-                attack_code.transactions_by_total_iteration_count(
+                run_code.transactions_by_total_iteration_count(
                     fork=fork,
-                    total_iterations=int(fixed_opcode_count * 1000),
+                    total_iterations=total_iterations,
                     sender=attack_sender,
                     to=attack_address,
                     calldata=calldata,
@@ -328,7 +335,7 @@ def test_account_access(
             )
         else:
             attack_txs = list(
-                attack_code.transactions_by_gas_limit(
+                run_code.transactions_by_gas_limit(
                     fork=fork,
                     gas_limit=gas_benchmark_value,
                     sender=attack_sender,
@@ -350,17 +357,13 @@ def test_account_access(
                     )
                 )
 
-    blocks = (
-        [Block(txs=attack_txs)]
-        if cache_strategy != CacheStrategy.CACHE_PREVIOUS_BLOCK
-        else [Block(txs=cache_txs), Block(txs=attack_txs)]
-    )
+    blocks = build_cache_strategy_blocks(cache_strategy, attack_txs, cache_txs)
 
     benchmark_test(
         pre=pre,
         post=post,
         blocks=blocks,
-        target_opcode=opcode,
+        target_opcode=target_opcode,
         skip_gas_used_validation=True,
         expected_receipt_status=1,
     )
