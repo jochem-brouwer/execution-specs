@@ -96,6 +96,7 @@ def delegate_with_calldata(
     authority: EOA,
     address: Address,
     calldata: Hash,
+    fork: Fork | None = None,
 ) -> Transaction:
     """
     Create a tx that delegates the authority and calls it with calldata.
@@ -103,8 +104,13 @@ def delegate_with_calldata(
     The delegated code determines what happens with the calldata.
     The authority nonce is incremented in-place.
     """
+    # Auth-list tx gas: see _fund_eoa comment in pre_alloc.py. Amsterdam
+    # needs state-gas overflow above MaxTxGas; Osaka caps tx.gas at
+    # MaxTxGas (EIP-7825) so the Amsterdam value would be rejected.
+    is_amsterdam = fork is not None and fork.name() == "Amsterdam"
+    auth_tx_gas_limit = 17_000_000 if is_amsterdam else 250_000
     tx = Transaction(
-        gas_limit=100_000,
+        gas_limit=auth_tx_gas_limit,
         to=authority,
         value=0,
         data=calldata,
@@ -146,10 +152,10 @@ def run_bloated_eoa_benchmark(
     runtime_address = pre.deploy_contract(code=runtime_code)
 
     init_tx = delegate_with_calldata(
-        pre, authority, setter_address, slot_0_value
+        pre, authority, setter_address, slot_0_value, fork=fork
     )
     runtime_tx = delegate_with_calldata(
-        pre, authority, runtime_address, Hash(0)
+        pre, authority, runtime_address, Hash(0), fork=fork
     )
 
     blocks: list[Block] = [Block(txs=[init_tx, runtime_tx])]
@@ -309,7 +315,7 @@ def test_sload_bloated_prefetch_miss(
     # forcing the prefetcher's pre-block snapshot to disagree with
     # the actual slot 0 value seen by every max-gas tx that follows.
     delegation_tx = delegate_with_calldata(
-        pre, authority, runtime_address, Hash(0)
+        pre, authority, runtime_address, Hash(0), fork=fork
     )
 
     blocks: list[Block] = [Block(txs=[delegation_tx])]

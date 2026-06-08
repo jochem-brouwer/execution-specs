@@ -1590,4 +1590,15 @@ class Amsterdam(
     #  related Amsterdam specs change over time, and before Amsterdam is
     #  live on mainnet.
 
-    pass
+    @classmethod
+    def transaction_gas_limit_cap(cls) -> int | None:
+        """
+        Under Amsterdam, EIP-7825's 16,777,216 cap applies only to the
+        RegularGas dimension of the two-dimensional gas budget. Total tx
+        gas (RegularGas + StateGas) is uncapped at the protocol level;
+        the overflow above MaxTxGas funds the StateGas axis. Returning
+        None lifts EEST's pre_alloc.deploy_contract guard that would
+        otherwise reject any deploy whose total gas limit exceeds the
+        RegularGas cap, leaving the StateGas budget at 0.
+        """
+        return None

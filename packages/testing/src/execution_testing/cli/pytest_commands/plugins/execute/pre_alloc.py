@@ -359,6 +359,19 @@ class Alloc(SharedAlloc):
         )
         deploy_gas_limit += calldata_gas_calculator(data=initcode)
         deploy_gas_limit = deploy_gas_limit * 2
+        # Amsterdam (EIP-8037 2D gas + EIP-7954 code-size to 32 KiB):
+        # tx.gas_limit splits into RegularGas = min(gas_limit, 16.78M)
+        # and StateGas = max(0, gas_limit - 16.78M). EIP-7954 code-deposit
+        # charges len(code) * CostPerStateByte (1530) on the StateGas axis
+        # plus AccountCreationSize (120) * 1530 = 183_600 from intrinsic.
+        # A 32 KiB deploy needs ~50.32 M state-gas, so tx.gas_limit must
+        # be at least MaxTxGas + state_needed. Block gas_limit must
+        # match — state-actor genesis built with --gas-limit=85_000_000.
+        if fork.name() == "Amsterdam":
+            state_needed = (120 + len(deploy_code)) * 1530
+            deploy_gas_limit = max(
+                deploy_gas_limit, 16_777_216 + state_needed + 1_000_000
+            )
         tx_gas_limit_cap = fork.transaction_gas_limit_cap()
         if tx_gas_limit_cap and deploy_gas_limit > tx_gas_limit_cap:
             raise ValueError(
@@ -483,6 +496,13 @@ class Alloc(SharedAlloc):
         deploy_gas_limit += calldata_gas_calculator(data=prepared_initcode)
 
         deploy_gas_limit = deploy_gas_limit * 2
+        # Amsterdam StateGas budget: see twin block in the deterministic-
+        # deploy path above. Same reasoning applies here.
+        if fork.name() == "Amsterdam":
+            state_needed = (120 + len(code)) * 1530
+            deploy_gas_limit = max(
+                deploy_gas_limit, 16_777_216 + state_needed + 1_000_000
+            )
         tx_gas_limit_cap = fork.transaction_gas_limit_cap()
         if tx_gas_limit_cap and deploy_gas_limit > tx_gas_limit_cap:
             raise ValueError(
@@ -549,6 +569,19 @@ class Alloc(SharedAlloc):
         assert code is None, "code parameter is not supported for execute"
         eoa = next(self._eoa_iterator)
         eoa.label = label
+        # Auth-list tx gas budget. Amsterdam (EIP-8037) routes the
+        # AuthorizationTuple's per-authority creation through state-gas
+        # (23 + 120 bytes × CostPerStateByte), so the tx needs gas above
+        # MaxTxGas (16,777,216) to leave a state-gas budget after the
+        # regular-axis cap. Pre-Amsterdam the auth-list intrinsic is
+        # ~25 k regular per tuple, so a few hundred k is plenty — and the
+        # tx-gas-limit cap (Osaka MaxTxGas) forbids exceeding 16.78 M.
+        fork_at = self._fork.fork_at(
+            block_number=self._block_number, timestamp=self._timestamp
+        )
+        auth_tx_gas_limit = (
+            17_000_000 if fork_at.name() == "Amsterdam" else 250_000
+        )
         amount_str = (
             f"{Number(amount) / 10**18:.18f} ETH"
             if amount is not None
@@ -595,7 +628,7 @@ class Alloc(SharedAlloc):
                             signer=eoa,
                         ),
                     ],
-                    gas_limit=100_000,
+                    gas_limit=auth_tx_gas_limit,
                 )
                 eoa.nonce = Number(eoa.nonce + 1)
 
@@ -620,7 +653,7 @@ class Alloc(SharedAlloc):
                             signer=eoa,
                         ),
                     ],
-                    gas_limit=100_000,
+                    gas_limit=auth_tx_gas_limit,
                 )
                 eoa.nonce = Number(eoa.nonce + 1)
             else:
@@ -638,7 +671,7 @@ class Alloc(SharedAlloc):
                             signer=eoa,
                         ),
                     ],
-                    gas_limit=100_000,
+                    gas_limit=auth_tx_gas_limit,
                 )
                 eoa.nonce = Number(eoa.nonce + 1)
 

@@ -86,6 +86,7 @@ from execution_testing.fixtures.post_verifications import PostVerifications
 from execution_testing.forks import Fork, TransitionFork
 from execution_testing.test_types import (
     Alloc,
+    EnvironmentDefaults,
     Environment,
     Removable,
     Requests,
@@ -1397,12 +1398,35 @@ class BlockchainTest(BaseTest):
                 max_fee_per_blob_gas=max_fee_per_blob_gas,
             )
 
-        # Materialise queued pre-alloc txs into a synthetic setup block.
+        # Materialise queued pre-alloc txs into synthetic setup blocks.
+        # Chunk by cumulative gas_limit so a single setup block never
+        # exceeds the live chain's block gas limit. The default
+        # pack-many-into-one-block model worked because every
+        # setup tx fit in ~100k; under Amsterdam a single 32 KiB
+        # deploy needs >67M (16.78M MaxTxGas + 50.32M state-gas for
+        # the code-deposit at 1530/byte). The live chain must therefore
+        # be brought up with --gas-limit=85_000_000 (state-actor flag)
+        # so deploys + auth-list setup txs each fit individually.
         blocks_to_process: List[Block] = []
         if callable(pending_getter):
             setup_txs = pending_getter()
             if setup_txs:
-                blocks_to_process.append(Block(txs=setup_txs))
+                block_gas_cap = 85_000_000
+                current_chunk: List = []
+                current_chunk_gas = 0
+                for stx in setup_txs:
+                    tx_gas = int(getattr(stx, "gas_limit", 0) or 0)
+                    if (
+                        current_chunk
+                        and current_chunk_gas + tx_gas > block_gas_cap
+                    ):
+                        blocks_to_process.append(Block(txs=current_chunk))
+                        current_chunk = []
+                        current_chunk_gas = 0
+                    current_chunk.append(stx)
+                    current_chunk_gas += tx_gas
+                if current_chunk:
+                    blocks_to_process.append(Block(txs=current_chunk))
         # Each block must be single-phase (Block.phase asserts otherwise);
         # mixed blocks (e.g. EIP-7702 authorization + benchmark exec) are
         # split into contiguous phase runs so benchmark gas isn't
