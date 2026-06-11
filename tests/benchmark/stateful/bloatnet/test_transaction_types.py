@@ -135,6 +135,7 @@ def yield_distinct_nonexistent_receiver() -> Generator[Address, None, None]:
 @pytest.mark.parametrize(
     "case_id",
     [
+        "diff_to_self",
         "diff_to_nonexistent",
         "diff_to_existent",
         "diff_to_contract",
@@ -157,6 +158,7 @@ def test_ether_transfers_onchain_receivers(
     Ether transfers to receivers that exist on-chain at run time.
 
     Scenarios:
+    - diff_to_self: distinct senders transferring to themselves
     - diff_to_nonexistent: distinct nonexistent receivers
       (matches AccountMode.NON_EXISTING_ACCOUNT)
     - diff_to_existent: distinct existent EOA receivers
@@ -176,7 +178,11 @@ def test_ether_transfers_onchain_receivers(
     """
     senders = yield_distinct_sender()
     receiver_execution_gas = 0
-    if case_id == "diff_to_nonexistent":
+    if case_id == "diff_to_self":
+        # The receiver is the transaction's own sender; the generator
+        # is never advanced.
+        receivers = senders
+    elif case_id == "diff_to_nonexistent":
         receivers = yield_distinct_nonexistent_receiver()
     elif case_id == "diff_to_existent":
         receivers = yield_distinct_existent_receiver()
@@ -202,9 +208,7 @@ def test_ether_transfers_onchain_receivers(
     elif case_id == "diff_to_contract_minimal":
         # The runtime is a single STOP byte, so transfers execute no code.
         receivers = yield_distinct_create2_receiver(
-            account_mode_initcode(
-                fork, AccountMode.EXISTING_CONTRACT_MINIMAL
-            )
+            account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_MINIMAL)
         )
     elif case_id == "diff_to_contract_same":
         # The runtime starts with a zero byte, so transfers stop there.
@@ -223,15 +227,17 @@ def test_ether_transfers_onchain_receivers(
     )
     iteration_count = gas_benchmark_value // iteration_cost
 
-    txs = [
-        Transaction(
-            to=next(receivers),
-            value=transfer_amount,
-            gas_limit=iteration_cost,
-            sender=next(senders),
+    txs = []
+    for _ in range(iteration_count):
+        sender = next(senders)
+        txs.append(
+            Transaction(
+                to=sender if case_id == "diff_to_self" else next(receivers),
+                value=transfer_amount,
+                gas_limit=iteration_cost,
+                sender=sender,
+            )
         )
-        for _ in range(iteration_count)
-    ]
 
     benchmark_test(
         pre=pre,
