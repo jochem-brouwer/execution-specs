@@ -19,6 +19,11 @@ from execution_testing import (
     keccak256,
 )
 
+from tests.benchmark.stateful.helpers import (
+    AccountMode,
+    account_mode_initcode,
+)
+
 # Deterministic sender pool of 15K accounts.
 # Funded via system contract withdrawals (funding.txt) in payload generation.
 # Placed outside pre-allocation to ensure accounts remain uncached.
@@ -80,9 +85,9 @@ def build_unique_contract_initcode() -> bytes:
 JOCHEMNET_UNIQUE_CONTRACT_INITCODE = build_unique_contract_initcode()
 
 
-def yield_distinct_unique_code_jumpdest_receiver() -> Generator[
-    Address, None, None
-]:
+def yield_distinct_create2_receiver(
+    initcode: bytes,
+) -> Generator[Address, None, None]:
     """
     Yield contract addresses deployed by the deterministic CREATE2 factory.
     """
@@ -90,7 +95,7 @@ def yield_distinct_unique_code_jumpdest_receiver() -> Generator[
         yield compute_create2_address(
             address=DETERMINISTIC_FACTORY_ADDRESS,
             salt=salt,
-            initcode=JOCHEMNET_UNIQUE_CONTRACT_INITCODE,
+            initcode=initcode,
         )
 
 
@@ -134,6 +139,9 @@ def yield_distinct_nonexistent_receiver() -> Generator[Address, None, None]:
         "diff_to_existent",
         "diff_to_contract",
         "diff_to_unique_code_jumpdest_contract",
+        "diff_to_contract_minimal",
+        "diff_to_contract_same",
+        "diff_to_contract_diff",
     ],
 )
 @pytest.mark.parametrize("transfer_amount", [0, 1])
@@ -153,10 +161,18 @@ def test_ether_transfers_onchain_receivers(
       (matches AccountMode.NON_EXISTING_ACCOUNT)
     - diff_to_existent: distinct existent EOA receivers
       (matches AccountMode.EXISTING_EOA)
-    - diff_to_contract: distinct contract receivers
-      (matches AccountMode.EXISTING_CONTRACT)
+    - diff_to_contract: distinct Bittrex contract receivers
     - diff_to_unique_code_jumpdest_contract: distinct CREATE2 contract
       receivers each holding unique deployed code
+    - diff_to_contract_minimal: distinct CREATE2 contract receivers
+      with a single-byte runtime
+      (matches AccountMode.EXISTING_CONTRACT_MINIMAL)
+    - diff_to_contract_same: distinct CREATE2 contract receivers with
+      identical max-size runtime
+      (matches AccountMode.EXISTING_CONTRACT_SAME)
+    - diff_to_contract_diff: distinct CREATE2 contract receivers with
+      unique max-size runtime
+      (matches AccountMode.EXISTING_CONTRACT_DIFF)
     """
     senders = yield_distinct_sender()
     receiver_execution_gas = 0
@@ -177,10 +193,28 @@ def test_ether_transfers_onchain_receivers(
         )
         receiver_execution_gas = runtime.gas_cost(fork)
     elif case_id == "diff_to_unique_code_jumpdest_contract":
-        receivers = yield_distinct_unique_code_jumpdest_receiver()
+        receivers = yield_distinct_create2_receiver(
+            JOCHEMNET_UNIQUE_CONTRACT_INITCODE
+        )
         # Runtime code aligns entry code path.
         runtime = Op.JUMP(Op.PUSH2(0x5FFF)) + Op.JUMPDEST
         receiver_execution_gas = runtime.gas_cost(fork)
+    elif case_id == "diff_to_contract_minimal":
+        # The runtime is a single STOP byte, so transfers execute no code.
+        receivers = yield_distinct_create2_receiver(
+            account_mode_initcode(
+                fork, AccountMode.EXISTING_CONTRACT_MINIMAL
+            )
+        )
+    elif case_id == "diff_to_contract_same":
+        # The runtime starts with a zero byte, so transfers stop there.
+        receivers = yield_distinct_create2_receiver(
+            account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_SAME)
+        )
+    elif case_id == "diff_to_contract_diff":
+        receivers = yield_distinct_create2_receiver(
+            account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_DIFF)
+        )
     else:
         raise ValueError(f"Unknown case: {case_id}")
 

@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
 from functools import partial
 
 from execution_testing import (
@@ -12,6 +12,7 @@ from execution_testing import (
     Alloc,
     AuthorizationTuple,
     Block,
+    Bytecode,
     Fork,
     Hash,
     IteratingBytecode,
@@ -46,6 +47,58 @@ class CacheStrategy(str, Enum):
     # Caching at previous block:
     # Target state is cold in EVM but (assumed) to be cached
     CACHE_PREVIOUS_BLOCK = "cache_previous_block"
+
+
+class AccountMode(Enum):
+    """Target Account Mode."""
+
+    EXISTING_CONTRACT_MINIMAL = auto()
+    EXISTING_CONTRACT_SAME = auto()
+    EXISTING_CONTRACT_DIFF = auto()
+    EXISTING_EOA = auto()
+    NON_EXISTING_ACCOUNT = auto()
+
+    @property
+    def derives_address_via_create2(self) -> bool:
+        """Whether the target address is derived via CREATE2."""
+        return self in (
+            AccountMode.EXISTING_CONTRACT_MINIMAL,
+            AccountMode.EXISTING_CONTRACT_SAME,
+            AccountMode.EXISTING_CONTRACT_DIFF,
+        )
+
+
+def build_existing_contract_initcode(
+    fork: Fork, account_mode: AccountMode
+) -> Bytecode:
+    """
+    Build the initcode for an existing contract.
+    """
+    max_code_size = fork.max_code_size()
+
+    # MCOPY fills MEM[0:0x8000] with JUMPDEST.
+    # Runtime only uses MEM[0:0x6000].
+    code = Op.MSTORE(0, bytes(Op.JUMPDEST * 32))
+    for size in (1 << s for s in range(5, 15)):
+        code += Op.MCOPY(size, 0, size)
+
+    if account_mode == AccountMode.EXISTING_CONTRACT_DIFF:
+        code += Op.MSTORE(0, Op.ADDRESS)
+    else:
+        code += Op.MSTORE8(0, 0)
+    code += Op.RETURN(0, max_code_size)
+
+    return code
+
+
+def account_mode_initcode(fork: Fork, account_mode: AccountMode) -> bytes:
+    """
+    Return the initcode bytes for the account mode's contracts.
+    """
+    if account_mode == AccountMode.EXISTING_CONTRACT_MINIMAL:
+        # The deployed runtime is a single zero byte (STOP).
+        return bytes(Op.RETURN(Op.PUSH1(0), Op.PUSH1(1)))
+    return bytes(build_existing_contract_initcode(fork, account_mode))
 
 
 def build_benchmark_txs(
