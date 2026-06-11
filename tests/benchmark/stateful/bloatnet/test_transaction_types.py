@@ -38,53 +38,6 @@ def yield_distinct_sender() -> Generator[EOA, None, None]:
         yield EOA(key=SENDER_BASE_KEY + i)
 
 
-def build_unique_contract_initcode() -> bytes:
-    """
-    Deployed runtime contract layout.
-
-        offset    size   contents
-        ------    ----   --------------------------------
-        0x0000       4   PUSH2 0x5FFF; JUMP   <- entry
-        0x0004      28   JUMPDEST padding
-        0x0020      12   JUMPDEST padding
-        0x002C      20   contract ADDRESS     <- unique
-        0x0040   24512   JUMPDEST             <- 0x5FFF lands here
-        0x6000           STOP
-
-    Embedded ADDRESS makes runtime unique per contract;
-    initcode and its CREATE2 hash is shared across all salts.
-    """
-    max_code_size = 0x6000  # EIP-170 contract code size limit
-
-    # MCOPY fills MEM[0:0x8000] with JUMPDEST.
-    # Runtime only uses MEM[0:0x6000].
-    code = Op.MSTORE(0, bytes(Op.JUMPDEST * 32))
-    for size in (1 << s for s in range(5, 15)):
-        code += Op.MCOPY(size, 0, size)
-
-    # Runtime entry: JUMP to final JUMPDEST, then STOP.
-    entry = Op.JUMP(max_code_size - 1)
-    entry += Op.JUMPDEST * (32 - len(entry))  # Padding
-
-    code += Op.MSTORE(0, bytes(entry))
-
-    # Mask ADDRESS into a JUMPDEST template via OR:
-    #                  bytes 0..12   bytes 12..32
-    #                  -----------   ------------
-    #     ADDRESS      00 .. 00      <20-byte address>
-    #     addr_slot    5b .. 5b      00 .. 00
-    #     OR result    5b .. 5b      <20-byte address>
-    addr_slot = Op.JUMPDEST * 12 + Op.STOP * 20
-    code += Op.MSTORE(0x20, Op.OR(Op.ADDRESS, bytes(addr_slot)))
-
-    code += Op.RETURN(0, max_code_size)
-
-    return bytes(code)
-
-
-JOCHEMNET_UNIQUE_CONTRACT_INITCODE = build_unique_contract_initcode()
-
-
 def yield_distinct_create2_receiver(
     initcode: bytes,
 ) -> Generator[Address, None, None]:
@@ -200,7 +153,7 @@ def test_ether_transfers_onchain_receivers(
         receiver_execution_gas = runtime.gas_cost(fork)
     elif case_id == "diff_to_unique_code_jumpdest_contract":
         receivers = yield_distinct_create2_receiver(
-            JOCHEMNET_UNIQUE_CONTRACT_INITCODE
+            account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_JUMPDEST)
         )
         # Runtime code aligns entry code path.
         runtime = Op.JUMP(Op.PUSH2(0x5FFF)) + Op.JUMPDEST

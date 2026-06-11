@@ -55,6 +55,7 @@ class AccountMode(Enum):
     EXISTING_CONTRACT_MINIMAL = auto()
     EXISTING_CONTRACT_SAME = auto()
     EXISTING_CONTRACT_DIFF = auto()
+    EXISTING_CONTRACT_JUMPDEST = auto()
     EXISTING_EOA = auto()
     NON_EXISTING_ACCOUNT = auto()
 
@@ -65,6 +66,7 @@ class AccountMode(Enum):
             AccountMode.EXISTING_CONTRACT_MINIMAL,
             AccountMode.EXISTING_CONTRACT_SAME,
             AccountMode.EXISTING_CONTRACT_DIFF,
+            AccountMode.EXISTING_CONTRACT_JUMPDEST,
         )
 
 
@@ -91,6 +93,53 @@ def build_existing_contract_initcode(
     return code
 
 
+def build_unique_contract_initcode() -> bytes:
+    """
+    Deployed runtime contract layout.
+
+        offset    size   contents
+        ------    ----   --------------------------------
+        0x0000       4   PUSH2 0x5FFF; JUMP   <- entry
+        0x0004      28   JUMPDEST padding
+        0x0020      12   JUMPDEST padding
+        0x002C      20   contract ADDRESS     <- unique
+        0x0040   24512   JUMPDEST             <- 0x5FFF lands here
+        0x6000           STOP
+
+    Embedded ADDRESS makes runtime unique per contract;
+    initcode and its CREATE2 hash is shared across all salts.
+    """
+    max_code_size = 0x6000  # EIP-170 contract code size limit
+
+    # MCOPY fills MEM[0:0x8000] with JUMPDEST.
+    # Runtime only uses MEM[0:0x6000].
+    code = Op.MSTORE(0, bytes(Op.JUMPDEST * 32))
+    for size in (1 << s for s in range(5, 15)):
+        code += Op.MCOPY(size, 0, size)
+
+    # Runtime entry: JUMP to final JUMPDEST, then STOP.
+    entry = Op.JUMP(max_code_size - 1)
+    entry += Op.JUMPDEST * (32 - len(entry))  # Padding
+
+    code += Op.MSTORE(0, bytes(entry))
+
+    # Mask ADDRESS into a JUMPDEST template via OR:
+    #                  bytes 0..12   bytes 12..32
+    #                  -----------   ------------
+    #     ADDRESS      00 .. 00      <20-byte address>
+    #     addr_slot    5b .. 5b      00 .. 00
+    #     OR result    5b .. 5b      <20-byte address>
+    addr_slot = Op.JUMPDEST * 12 + Op.STOP * 20
+    code += Op.MSTORE(0x20, Op.OR(Op.ADDRESS, bytes(addr_slot)))
+
+    code += Op.RETURN(0, max_code_size)
+
+    return bytes(code)
+
+
+JOCHEMNET_UNIQUE_CONTRACT_INITCODE = build_unique_contract_initcode()
+
+
 def account_mode_initcode(fork: Fork, account_mode: AccountMode) -> bytes:
     """
     Return the initcode bytes for the account mode's contracts.
@@ -98,6 +147,8 @@ def account_mode_initcode(fork: Fork, account_mode: AccountMode) -> bytes:
     if account_mode == AccountMode.EXISTING_CONTRACT_MINIMAL:
         # The deployed runtime is a single zero byte (STOP).
         return bytes(Op.RETURN(Op.PUSH1(0), Op.PUSH1(1)))
+    if account_mode == AccountMode.EXISTING_CONTRACT_JUMPDEST:
+        return JOCHEMNET_UNIQUE_CONTRACT_INITCODE
     return bytes(build_existing_contract_initcode(fork, account_mode))
 
 

@@ -25,8 +25,8 @@ from execution_testing import (
 from tests.benchmark.stateful.helpers import (
     AccountMode,
     CacheStrategy,
+    account_mode_initcode,
     build_cache_strategy_blocks,
-    build_existing_contract_initcode,
 )
 
 
@@ -131,6 +131,7 @@ def account_access_params() -> list:
             AccountMode.EXISTING_CONTRACT_MINIMAL,
             AccountMode.EXISTING_CONTRACT_SAME,
             AccountMode.EXISTING_CONTRACT_DIFF,
+            AccountMode.EXISTING_CONTRACT_JUMPDEST,
             AccountMode.NON_EXISTING_ACCOUNT,
         ]:
             combos.append((op, 0, mode))
@@ -164,16 +165,11 @@ def test_account_access(
     address_retriever: Bytecode
     calldataload_start = Op.CALLDATALOAD(0)
     if account_mode.derives_address_via_create2:
-        # initcode returns a single zero byte (STOP) as the runtime.
-        init_code = (
-            Op.RETURN(Op.PUSH1(0), Op.PUSH1(1))
-            if account_mode == AccountMode.EXISTING_CONTRACT_MINIMAL
-            else build_existing_contract_initcode(fork, account_mode)
-        )
+        init_code = account_mode_initcode(fork, account_mode)
         address_retriever = Create2PreimageLayout(
             factory_address=DETERMINISTIC_FACTORY_ADDRESS,
             salt=calldataload_start,
-            init_code_hash=keccak256(bytes(init_code)),
+            init_code_hash=keccak256(init_code),
         )
         increment_op = address_retriever.increment_salt_op()
     elif account_mode == AccountMode.EXISTING_EOA:
