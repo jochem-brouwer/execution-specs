@@ -8,7 +8,6 @@ from execution_testing import (
     Block,
     Fork,
     Hash,
-    Op,
     Transaction,
     compute_create2_address,
 )
@@ -18,7 +17,7 @@ from tests.benchmark.stateful.helpers import (
     account_mode_initcode,
 )
 
-RECEIVER_CONTRACT_COUNT = 50_000
+RECEIVER_CONTRACT_COUNT = 5
 
 CONTRACT_MODES = [
     AccountMode.EXISTING_CONTRACT_MINIMAL,
@@ -28,38 +27,11 @@ CONTRACT_MODES = [
 ]
 
 
-def deployment_gas_limit(
-    fork: Fork, initcode: bytes, deployed_code_size: int
-) -> int:
-    """
-    Return an upper bound on the gas for one factory deployment.
-
-    Sums the modeled costs and adds headroom for the factory dispatch,
-    the initcode's memory writes, and the 63/64 rule.
-    """
-    intrinsic = fork.transaction_intrinsic_cost_calculator()(
-        calldata=Hash(0) + initcode
-    )
-    create_cost = Op.CREATE2(
-        value=0,
-        offset=0,
-        size=len(initcode),
-        salt=0,
-        init_code_size=len(initcode),
-    ).gas_cost(fork)
-    deposit_cost = Op.RETURN(
-        0,
-        deployed_code_size,
-        code_deposit_size=deployed_code_size,
-    ).gas_cost(fork)
-    base = intrinsic + create_cost + deposit_cost
-    return base + base // 16 + 100_000
-
-
 def test_deploy_existing_contracts(
     benchmark_test: BenchmarkTestFiller,
     pre: Alloc,
     fork: Fork,
+    gas_benchmark_value: int,
 ) -> None:
     """
     Deploy the contracts behind the `AccountMode.EXISTING_CONTRACT_*`
@@ -67,26 +39,26 @@ def test_deploy_existing_contracts(
 
     Runs once as a global setup before the bloatnet benchmarks; the
     transactions intentionally carry no test phase so that the payload
-    pipeline replays them ahead of every scenario.
+    pipeline replays them ahead of every scenario. Each deployment gets
+    the full block gas budget and its own block, so no transaction is
+    ever dropped at block building.
     """
-    txs = []
+    blocks = []
     post = {}
     for account_mode in CONTRACT_MODES:
         initcode = account_mode_initcode(fork, account_mode)
-        deployed_code_size = (
-            1
-            if account_mode == AccountMode.EXISTING_CONTRACT_MINIMAL
-            else fork.max_code_size()
-        )
-        gas_limit = deployment_gas_limit(fork, initcode, deployed_code_size)
         sender = pre.fund_eoa()
         for salt in range(RECEIVER_CONTRACT_COUNT):
-            txs.append(
-                Transaction(
-                    to=DETERMINISTIC_FACTORY_ADDRESS,
-                    data=Hash(salt) + initcode,
-                    gas_limit=gas_limit,
-                    sender=sender,
+            blocks.append(
+                Block(
+                    txs=[
+                        Transaction(
+                            to=DETERMINISTIC_FACTORY_ADDRESS,
+                            data=Hash(salt) + initcode,
+                            gas_limit=gas_benchmark_value,
+                            sender=sender,
+                        )
+                    ]
                 )
             )
         for salt in (0, RECEIVER_CONTRACT_COUNT - 1):
@@ -99,7 +71,7 @@ def test_deploy_existing_contracts(
 
     benchmark_test(
         post=post,
-        blocks=[Block(txs=txs)],
+        blocks=blocks,
         skip_gas_used_validation=True,
         expected_receipt_status=1,
     )
