@@ -93,6 +93,10 @@ def build_existing_contract_initcode(
     return code
 
 
+# Runtime size of the jochemnet unique-code contract (EIP-170 limit).
+JOCHEMNET_RUNTIME_SIZE = 0x6000
+
+
 def build_unique_contract_initcode() -> bytes:
     """
     Deployed runtime contract layout.
@@ -109,7 +113,7 @@ def build_unique_contract_initcode() -> bytes:
     Embedded ADDRESS makes runtime unique per contract;
     initcode and its CREATE2 hash is shared across all salts.
     """
-    max_code_size = 0x6000  # EIP-170 contract code size limit
+    max_code_size = JOCHEMNET_RUNTIME_SIZE
 
     # MCOPY fills MEM[0:0x8000] with JUMPDEST.
     # Runtime only uses MEM[0:0x6000].
@@ -147,6 +151,17 @@ def account_mode_initcode(fork: Fork, account_mode: AccountMode) -> bytes:
     if account_mode == AccountMode.EXISTING_CONTRACT_JUMPDEST:
         return bytes(build_unique_contract_initcode())
     return bytes(build_existing_contract_initcode(fork, account_mode))
+
+
+def account_mode_runtime_size(fork: Fork, account_mode: AccountMode) -> int:
+    """
+    Return the deployed runtime size in bytes for the account mode.
+    """
+    if account_mode == AccountMode.EXISTING_CONTRACT_MINIMAL:
+        return 1
+    if account_mode == AccountMode.EXISTING_CONTRACT_JUMPDEST:
+        return JOCHEMNET_RUNTIME_SIZE
+    return fork.max_code_size()
 
 
 def build_benchmark_txs(
