@@ -107,73 +107,53 @@ def test_ether_transfers_onchain_receivers(
     fork: Fork,
     gas_benchmark_value: int,
 ) -> None:
-    """
-    Ether transfers to receivers that exist on-chain at run time.
-
-    Scenarios:
-    - diff_to_self: distinct senders transferring to themselves
-    - diff_to_nonexistent: distinct nonexistent receivers
-      (matches AccountMode.NON_EXISTING_ACCOUNT)
-    - diff_to_existent: distinct existent EOA receivers
-      (matches AccountMode.EXISTING_EOA)
-    - diff_to_contract: distinct Bittrex contract receivers
-    - diff_to_unique_code_jumpdest_contract: distinct CREATE2 contract
-      receivers each holding unique deployed code
-    - diff_to_contract_minimal: distinct CREATE2 contract receivers
-      with a single-byte runtime
-      (matches AccountMode.EXISTING_CONTRACT_MINIMAL)
-    - diff_to_contract_same: distinct CREATE2 contract receivers with
-      identical max-size runtime
-      (matches AccountMode.EXISTING_CONTRACT_SAME)
-    - diff_to_contract_diff: distinct CREATE2 contract receivers with
-      unique max-size runtime
-      (matches AccountMode.EXISTING_CONTRACT_DIFF)
-    """
+    """Benchmark ether transfers across different receiver account types."""
     senders = yield_distinct_sender()
     receiver_execution_gas = 0
-    if case_id == "diff_to_self":
-        # The receiver is the transaction's own sender; the generator
-        # is never advanced.
-        receivers = senders
-    elif case_id == "diff_to_nonexistent":
-        receivers = yield_distinct_nonexistent_receiver()
-    elif case_id == "diff_to_existent":
-        receivers = yield_distinct_existent_receiver()
-    elif case_id == "diff_to_contract":
-        receivers = yield_distinct_contract_receiver()
-        # Runtime code is the same across all the receivers
-        # Example contract: https://etherscan.io/address/0xa888df3ef62286dde06a79395760b9bce6c83c83#code
-        runtime = (
-            Op.MSTORE(0x40, 0x60, new_memory_size=0x60)
-            + Op.JUMPI(Op.PUSH2(0x49), Op.ISZERO(Op.CALLDATASIZE))
-            + Op.JUMPDEST * 3
-            + Op.JUMP(Op.PUSH2(0x50))
-            + Op.JUMPDEST
-        )
-        receiver_execution_gas = runtime.gas_cost(fork)
-    elif case_id == "diff_to_unique_code_jumpdest_contract":
-        receivers = yield_distinct_create2_receiver(
-            account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_JUMPDEST)
-        )
-        # Runtime code aligns entry code path.
-        runtime = Op.JUMP(Op.PUSH2(0x5FFF)) + Op.JUMPDEST
-        receiver_execution_gas = runtime.gas_cost(fork)
-    elif case_id == "diff_to_contract_minimal":
-        # The runtime is a single STOP byte, so transfers execute no code.
-        receivers = yield_distinct_create2_receiver(
-            account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_MINIMAL)
-        )
-    elif case_id == "diff_to_contract_same":
-        # The runtime starts with a zero byte, so transfers stop there.
-        receivers = yield_distinct_create2_receiver(
-            account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_SAME)
-        )
-    elif case_id == "diff_to_contract_diff":
-        receivers = yield_distinct_create2_receiver(
-            account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_DIFF)
-        )
-    else:
-        raise ValueError(f"Unknown case: {case_id}")
+    receivers: Generator[Address, None, None]
+    match case_id:
+        case "diff_to_self":
+            receivers = senders
+        case "diff_to_nonexistent":
+            receivers = yield_distinct_nonexistent_receiver()
+        case "diff_to_existent":
+            receivers = yield_distinct_existent_receiver()
+        case "diff_to_contract":
+            receivers = yield_distinct_contract_receiver()
+            # Runtime code is the same across all the receivers
+            # Example contract: https://etherscan.io/address/0xa888df3ef62286dde06a79395760b9bce6c83c83#code
+            runtime = (
+                Op.MSTORE(0x40, 0x60, new_memory_size=0x60)
+                + Op.JUMPI(Op.PUSH2(0x49), Op.ISZERO(Op.CALLDATASIZE))
+                + Op.JUMPDEST * 3
+                + Op.JUMP(Op.PUSH2(0x50))
+                + Op.JUMPDEST
+            )
+            receiver_execution_gas = runtime.gas_cost(fork)
+        case "diff_to_unique_code_jumpdest_contract":
+            receivers = yield_distinct_create2_receiver(
+                account_mode_initcode(
+                    fork, AccountMode.EXISTING_CONTRACT_JUMPDEST
+                )
+            )
+            runtime = Op.JUMP(Op.PUSH2(0x5FFF)) + Op.JUMPDEST
+            receiver_execution_gas = runtime.gas_cost(fork)
+        case "diff_to_contract_minimal":
+            receivers = yield_distinct_create2_receiver(
+                account_mode_initcode(
+                    fork, AccountMode.EXISTING_CONTRACT_MINIMAL
+                )
+            )
+        case "diff_to_contract_same":
+            receivers = yield_distinct_create2_receiver(
+                account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_SAME)
+            )
+        case "diff_to_contract_diff":
+            receivers = yield_distinct_create2_receiver(
+                account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_DIFF)
+            )
+        case _:
+            raise ValueError(f"Unknown case: {case_id}")
 
     iteration_cost = (
         fork.transaction_intrinsic_cost_calculator()() + receiver_execution_gas

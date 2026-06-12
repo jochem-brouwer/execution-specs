@@ -137,9 +137,6 @@ def build_unique_contract_initcode() -> bytes:
     return bytes(code)
 
 
-JOCHEMNET_UNIQUE_CONTRACT_INITCODE = build_unique_contract_initcode()
-
-
 def account_mode_initcode(fork: Fork, account_mode: AccountMode) -> bytes:
     """
     Return the initcode bytes for the account mode's contracts.
@@ -148,7 +145,7 @@ def account_mode_initcode(fork: Fork, account_mode: AccountMode) -> bytes:
         # The deployed runtime is a single zero byte (STOP).
         return bytes(Op.RETURN(Op.PUSH1(0), Op.PUSH1(1)))
     if account_mode == AccountMode.EXISTING_CONTRACT_JUMPDEST:
-        return JOCHEMNET_UNIQUE_CONTRACT_INITCODE
+        return bytes(build_unique_contract_initcode())
     return bytes(build_existing_contract_initcode(fork, account_mode))
 
 

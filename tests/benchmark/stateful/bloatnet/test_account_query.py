@@ -116,31 +116,25 @@ def test_ext_account_query_warm(
 
 def account_access_params() -> list:
     """Generate (opcode, value_sent, account_mode, overhead_baseline)."""
-    combos = []
-
-    for mode in AccountMode:
-        for op in [Op.CALL, Op.CALLCODE]:
-            combos.append((op, 0, mode))
-            combos.append((op, 1, mode))
-
-        for op in [Op.BALANCE, Op.STATICCALL, Op.DELEGATECALL]:
-            combos.append((op, 0, mode))
-
-    for op in [Op.EXTCODECOPY, Op.EXTCODESIZE, Op.EXTCODEHASH]:
-        for mode in [
-            AccountMode.EXISTING_CONTRACT_MINIMAL,
-            AccountMode.EXISTING_CONTRACT_SAME,
-            AccountMode.EXISTING_CONTRACT_DIFF,
-            AccountMode.EXISTING_CONTRACT_JUMPDEST,
-            AccountMode.NON_EXISTING_ACCOUNT,
-        ]:
-            combos.append((op, 0, mode))
-
+    target_opcodes = [
+        Op.CALL,
+        Op.CALLCODE,
+        Op.BALANCE,
+        Op.STATICCALL,
+        Op.DELEGATECALL,
+        Op.EXTCODECOPY,
+        Op.EXTCODESIZE,
+        Op.EXTCODEHASH,
+    ]
+    value_bearing_opcodes = {Op.CALL, Op.CALLCODE}
     params = []
-    for op, value_sent, mode in combos:
-        params.append(pytest.param(op, value_sent, mode, False))
-        if mode.derives_address_via_create2:
-            params.append(pytest.param(op, value_sent, mode, True))
+    for mode in AccountMode:
+        for op in target_opcodes:
+            values = (0, 1) if op in value_bearing_opcodes else (0,)
+            for value_sent in values:
+                params.append(pytest.param(op, value_sent, mode, False))
+                if mode.derives_address_via_create2:
+                    params.append(pytest.param(op, value_sent, mode, True))
     return params
 
 
@@ -172,16 +166,16 @@ def test_account_access(
             init_code_hash=keccak256(init_code),
         )
         increment_op = address_retriever.increment_salt_op()
-    elif account_mode == AccountMode.EXISTING_EOA:
-        # Spamoor EOA creator (https://github.com/CPerezz/spamoor/pull/12)
-        address_retriever = SequentialAddressLayout(
-            starting_address=Op.ADD(0x1000, calldataload_start),
-            increment=1,
-        )
-        increment_op = address_retriever.increment_address_op()
     else:
+        # Spamoor EOA creator (https://github.com/CPerezz/spamoor/pull/12)
+        # The created EOA accounts start from 0x1000
+        base_addr = (
+            0x1000
+            if account_mode == AccountMode.EXISTING_EOA
+            else keccak256(b"random")
+        )
         address_retriever = SequentialAddressLayout(
-            starting_address=Op.ADD(keccak256(b"random"), calldataload_start),
+            starting_address=Op.ADD(base_addr, calldataload_start),
             increment=1,
         )
         increment_op = address_retriever.increment_address_op()
