@@ -58,7 +58,7 @@ class AccountMode(Enum):
     EXISTING_CONTRACT_MINIMAL = auto()
     EXISTING_CONTRACT_SAME = auto()
     EXISTING_CONTRACT_DIFF = auto()
-    EXISTING_CONTRACT_JUMPDEST = auto()
+    #EXISTING_CONTRACT_JUMPDEST = auto()
     EXISTING_EOA = auto()
     NON_EXISTING_ACCOUNT = auto()
 
@@ -69,7 +69,7 @@ class AccountMode(Enum):
             AccountMode.EXISTING_CONTRACT_MINIMAL,
             AccountMode.EXISTING_CONTRACT_SAME,
             AccountMode.EXISTING_CONTRACT_DIFF,
-            AccountMode.EXISTING_CONTRACT_JUMPDEST,
+            #AccountMode.EXISTING_CONTRACT_JUMPDEST,
         )
 
 
