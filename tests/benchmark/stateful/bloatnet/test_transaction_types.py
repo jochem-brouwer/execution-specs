@@ -22,6 +22,7 @@ from execution_testing import (
 from tests.benchmark.stateful.helpers import (
     AccountMode,
     account_mode_initcode,
+    diff_delegate_authority,
 )
 
 # Deterministic sender pool of 15K accounts.
@@ -84,6 +85,17 @@ def yield_distinct_nonexistent_receiver() -> Generator[Address, None, None]:
         yield Address(address)
 
 
+def yield_distinct_delegate_receiver() -> Generator[Address, None, None]:
+    """
+    Yield the deterministic EOAs that are EIP-7702 delegated to distinct
+    EXISTING_CONTRACT_DIFF contracts. The delegations are part of the chain
+    prestate (created by test_deploy_existing_contracts), so they are not
+    deployed during the measured run.
+    """
+    for i in itertools.count(0):
+        yield diff_delegate_authority(i)
+
+
 @pytest.mark.repricing
 @pytest.mark.parametrize(
     "case_id",
@@ -96,6 +108,7 @@ def yield_distinct_nonexistent_receiver() -> Generator[Address, None, None]:
         "diff_to_contract_minimal",
         "diff_to_contract_same",
         "diff_to_contract_diff",
+        "diff_to_delegated_contract_diff",
     ],
 )
 @pytest.mark.parametrize("transfer_amount", [0, 1])
@@ -152,6 +165,13 @@ def test_ether_transfers_onchain_receivers(
             receivers = yield_distinct_create2_receiver(
                 account_mode_initcode(fork, AccountMode.EXISTING_CONTRACT_DIFF)
             )
+        case "diff_to_delegated_contract_diff":
+            # Receivers are EOAs delegated (EIP-7702, in the prestate) to
+            # distinct DIFF contracts. A top-level call to a delegated account
+            # warms the delegation target without charging cold access, and the
+            # DIFF runtime stops at its first byte, so per-transfer gas equals
+            # the intrinsic cost (as in diff_to_contract_diff).
+            receivers = yield_distinct_delegate_receiver()
         case _:
             raise ValueError(f"Unknown case: {case_id}")
 

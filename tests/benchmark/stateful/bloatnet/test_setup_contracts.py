@@ -6,6 +6,7 @@ from execution_testing import (
     Alloc,
     AuthorizationTuple,
     BenchmarkTestFiller,
+    Block,
     Fork,
     Hash,
     Op,
@@ -147,11 +148,26 @@ def test_deploy_existing_contracts(
             code=DELEGATION_PREFIX + bytes(diff_delegate_target(fork, i)),
         )
 
-    blocks = pack_transactions_into_blocks(txs, gas_benchmark_value)
+    # All deploy + delegation work is the global setup (prestate): place it in
+    # setup_blocks so the payload pipeline routes it to the setup phase and
+    # replays it ahead of every benchmark. A single trivial measured block
+    # follows so the benchmark filler has a measured block; nothing in
+    # setup_blocks is measured, so the per-block gas never trips the cap.
+    setup_blocks = pack_transactions_into_blocks(txs, gas_benchmark_value)
+    probe = pre.fund_eoa()
 
     benchmark_test(
         post=post,
-        blocks=blocks,
+        setup_blocks=setup_blocks,
+        blocks=[
+            Block(
+                txs=[
+                    Transaction(
+                        to=probe, value=0, gas_limit=21_000, sender=probe
+                    )
+                ]
+            )
+        ],
         skip_gas_used_validation=True,
         expected_receipt_status=1,
     )
