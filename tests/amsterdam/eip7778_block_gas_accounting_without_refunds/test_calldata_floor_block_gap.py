@@ -21,11 +21,13 @@ execution-metered schedule, ``TX_DATA_TOKEN_STANDARD``); floor = 64 gas/byte
 (``TX_DATA_TOKEN_FLOOR``, EIP-7976). Zero bytes are metered at 4 gas/byte on
 the standard schedule but still 64 gas/byte at the floor, widening the gap.
 
-This test constructs a block of identical pure-data-post transactions and
-asserts that it is accepted as valid even though the sum of the floors the
-senders pay exceeds the block gas limit several times over. If the floor were
-correctly enforced at the block level, only ``block_gas_limit // floor``
-transactions would fit.
+To fill the block, transactions are packed largest-first: the per-transaction
+inclusion check reserves each transaction's floor against the block, but only
+its cheaper pre-floor cost is added to ``block_gas_used``. Progressively
+smaller data posts mop up the reservation the large ones could not use, so the
+block's counted gas is driven to ~95% of the limit while it carries several
+times the calldata a correctly floored block limit would allow
+(``block_gas_limit // 64`` bytes).
 """
 
 import pytest
@@ -44,16 +46,19 @@ from .spec import ref_spec_7778
 REFERENCE_SPEC_GIT_PATH = ref_spec_7778.git_path
 REFERENCE_SPEC_VERSION = ref_spec_7778.version
 
+# Fill the block's counted gas to at least this fraction of the limit.
+FILL_TARGET_PERCENT = 95
+# Cap individual transactions to keep the fixture size bounded.
+MAX_CALLDATA_LEN = 260_000
+
 
 @pytest.mark.parametrize(
-    "calldata_byte,calldata_len",
+    "calldata_byte",
     [
-        # The scenario from the EIP-8037 accounting write-up: a 260,000-byte
-        # non-zero data post. floor = 16,655,000, execution cost = 4,175,000.
-        pytest.param(0xFF, 260_000, id="nonzero_260k_bytes"),
-        # Zero bytes are metered even cheaper on the standard schedule
-        # (4 gas/byte) while paying the same floor, so the gap is far larger.
-        pytest.param(0x00, 260_000, id="zero_260k_bytes"),
+        # 16 gas/byte on the standard schedule, 64 at the floor: a 4x gap.
+        pytest.param(0xFF, id="nonzero"),
+        # 4 gas/byte standard vs the same 64 at the floor: a 16x gap.
+        pytest.param(0x00, id="zero"),
     ],
 )
 @pytest.mark.valid_from("Amsterdam")
@@ -62,15 +67,14 @@ def test_calldata_floor_invisible_to_block_limit(
     pre: Alloc,
     fork: Fork,
     calldata_byte: int,
-    calldata_len: int,
 ) -> None:
     """
-    Pack more floor-bound data posts into a block than the floor should allow.
+    Fill a block with floor-bound data posts beyond the floor's intended cap.
 
     The block is expected to be *valid*: its ``block_gas_used`` counts only the
-    pre-floor execution cost, which stays under the limit, even though the sum
+    pre-floor execution cost and is driven to ~95% of the limit, while the sum
     of the calldata floors the senders pay is several times the block gas
-    limit.
+    limit and the calldata carried far exceeds ``block_gas_limit // 64`` bytes.
     """
     tx_gas_limit_cap = fork.transaction_gas_limit_cap()
     assert tx_gas_limit_cap is not None, "fork must cap per-tx gas (EIP-7825)"
@@ -81,46 +85,49 @@ def test_calldata_floor_invisible_to_block_limit(
     intrinsic_calc = fork.transaction_intrinsic_cost_calculator()
     floor_calc = fork.transaction_data_floor_cost_calculator()
 
-    data = bytes([calldata_byte]) * calldata_len
+    # The floor is linear in calldata length: base + floor_per_byte * length.
+    base_floor = floor_calc(data=b"")
+    floor_per_byte = floor_calc(data=b"\x00") - base_floor
 
-    # F: the calldata floor. The sender pays this and must set a gas limit of
-    # at least this much for the transaction to be valid.
-    floor = floor_calc(data=data)
+    # Greedily pack data posts largest-first. Each transaction reserves its
+    # floor (min(TX_MAX_GAS_LIMIT, gas_limit)) against the remaining block gas,
+    # but only its pre-floor execution cost is added to ``block_gas_used``. As
+    # the block fills, the reservation shrinks, so later transactions carry
+    # less calldata -- exactly the surplus the accounting gap allows.
+    fill_target = block_gas_limit * FILL_TARGET_PERCENT // 100
 
-    # c: what the block-level accounting actually counts. For a value-less call
-    # to a STOP target there is no execution or state gas, so the block
-    # contribution is exactly the regular gas deducted before execution.
-    block_contribution = intrinsic_calc(
-        calldata=data,
-        return_cost_deducted_prior_execution=True,
-    )
-    assert floor > block_contribution, (
-        "the calldata floor must bind above the execution-metered cost"
-    )
-
-    # If the floor were enforced at the block level, at most this many such
-    # transactions could be included.
-    intended_max_txs = block_gas_limit // floor
-
-    # What the current accounting actually admits: the per-transaction
-    # inclusion check reserves min(TX_MAX_GAS_LIMIT, tx.gas) == floor of block
-    # gas, but only `block_contribution` is added to `block_gas_used` after
-    # the transaction runs. Mirror that loop to size the block exactly.
-    reserve = min(tx_gas_limit_cap, floor)
+    calldata_lengths = []
     block_gas_used = 0
-    num_txs = 0
-    while reserve <= block_gas_limit - block_gas_used:
-        block_gas_used += block_contribution
-        num_txs += 1
+    while block_gas_used < fill_target:
+        remaining_reserve = block_gas_limit - block_gas_used
+        max_floor = min(tx_gas_limit_cap, remaining_reserve)
+        length = min(
+            (max_floor - base_floor) // floor_per_byte, MAX_CALLDATA_LEN
+        )
+        if length <= 0:
+            break
+        data = bytes([calldata_byte]) * length
+        assert floor_calc(data=data) <= max_floor
+        block_gas_used += intrinsic_calc(
+            calldata=data,
+            return_cost_deducted_prior_execution=True,
+        )
+        calldata_lengths.append(length)
 
-    assert num_txs > intended_max_txs, (
-        f"scenario must exceed the intended worst case "
-        f"({num_txs} vs {intended_max_txs})"
-    )
-    # Sanity: the senders collectively pay more floor than a whole block of
-    # gas, yet the block is under its limit -- the floor is invisible to it.
-    assert num_txs * floor > block_gas_limit
+    assert block_gas_used >= fill_target, "block should be nearly full"
     assert block_gas_used <= block_gas_limit
+
+    # The block carries more calldata than the floor rate would let it pay for.
+    total_calldata = sum(calldata_lengths)
+    floor_budget = block_gas_limit // floor_per_byte
+    assert total_calldata > floor_budget
+
+    # The floors the senders collectively pay dwarf a whole block of gas, yet
+    # the block stays under its limit -- the floor is invisible to it.
+    total_floor_paid = sum(
+        base_floor + floor_per_byte * length for length in calldata_lengths
+    )
+    assert total_floor_paid > block_gas_limit
 
     target = pre.deterministic_deploy_contract(deploy_code=Op.STOP)
 
@@ -129,11 +136,11 @@ def test_calldata_floor_invisible_to_block_limit(
     txs = [
         Transaction(
             to=target,
-            data=data,
-            gas_limit=floor,
+            data=bytes([calldata_byte]) * length,
+            gas_limit=base_floor + floor_per_byte * length,
             sender=pre.fund_eoa(10**20),
         )
-        for _ in range(num_txs)
+        for length in calldata_lengths
     ]
 
     blockchain_test(
