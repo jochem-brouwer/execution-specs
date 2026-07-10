@@ -28,6 +28,23 @@ smaller data posts mop up the reservation the large ones could not use, so the
 block's counted gas is driven to ~95% of the limit while it carries several
 times the calldata a correctly floored block limit would allow
 (``block_gas_limit // 64`` bytes).
+
+Measured results (Amsterdam, ``block_gas_limit = 2 * TX_MAX_GAS_LIMIT =
+33,554,432``; floor budget ``33,554,432 // 64 = 524,288`` bytes = 512 KiB).
+Each block below is accepted as valid:
+
+| variant  | txs | block gas_used / limit    | calldata in block   | oversize |
+|----------|-----|---------------------------|---------------------|----------|
+| nonzero  | 12  | 31,900,896 / 33,554,432   | 1,982,556 B (~1.9M) | 3.8x     |
+| zero     | 50  | 31,896,068 / 33,554,432   | 7,786,517 B (~7.4M) | 14.9x    |
+
+Both blocks report ``gas_used`` at 95.1% of the limit, yet the calldata floors
+the senders collectively pay -- 127,063,584 gas (nonzero) and 499,087,088 gas
+(zero) -- are 3.8x and 14.9x the block gas limit, none of which the block-level
+accounting counts. Re-run to verify:
+
+    uv run fill tests/amsterdam -k
+    test_calldata_floor_invisible_to_block_limit --fork Amsterdam
 """
 
 import pytest
