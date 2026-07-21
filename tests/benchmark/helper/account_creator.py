@@ -18,6 +18,11 @@ from execution_testing.forks import Osaka
 
 DEFAULT_CODE_SIZE = Osaka.max_code_size()
 
+# Upper bound on generated runtime sizes: the jump target inside the
+# JUMPDEST-pattern runtime is encoded as a fixed PUSH3, which addresses
+# offsets up to 0xFFFFFF (so code sizes up to 0x01000000 bytes).
+MAX_PATTERN_CODE_SIZE = 0x01000000
+
 
 class AccountMode(Enum):
     """Benchmark target account variant."""
@@ -125,9 +130,23 @@ class StopJumpdestInitcode(ContractInitcode):
         return Op.STOP
 
 
+def _jump_target_push(code_size: int) -> Bytecode:
+    """
+    Push the entry-JUMP target (`code_size - 1`) at a fixed width.
+
+    PUSH2 for any code_size up to 0x010000 (matching the encoding of
+    state already deployed on live testnets), PUSH3 above it.
+    """
+    if code_size <= 0x010000:
+        return Op.PUSH2[code_size - 1]
+    return Op.PUSH3[code_size - 1]
+
+
 class JochemnetPredeployContractInitcode(ContractInitcode):
     """
     Initcode whose deployed runtime embeds its own contract ADDRESS.
+
+    With the default `code_size` (Osaka max code size, 24576):
 
         offset    size   contents
         ------    ----   --------------------------------
@@ -137,6 +156,15 @@ class JochemnetPredeployContractInitcode(ContractInitcode):
         0x002C      20   contract ADDRESS     <- unique
         0x0040   24512   JUMPDEST             <- 0x5FFF lands here
 
+    The jump target is encoded as PUSH2 for any `code_size` up to
+    0x010000 — a fixed width, NOT a minimal push, so already-deployed
+    state on live testnets (which used the PUSH2 encoding) keeps its
+    initcode and CREATE2 addresses. Above 0x010000 the target no longer
+    fits two bytes and the entry becomes `PUSH3 code_size-1; JUMP`
+    (5 bytes, 27 bytes of JUMPDEST padding), which changes the initcode
+    and therefore the derived CREATE2 addresses. PUSH3 caps supported
+    sizes at MAX_PATTERN_CODE_SIZE (0x01000000).
+
     Embedded ADDRESS makes the runtime unique per contract; initcode and
     its CREATE2 hash are shared across all salts.
     """
@@ -145,14 +173,22 @@ class JochemnetPredeployContractInitcode(ContractInitcode):
 
     def __new__(cls, *, code_size: int = DEFAULT_CODE_SIZE) -> Self:
         """Assemble the initcode."""
+        # The address region ends at 0x40 and the entry JUMP must land
+        # on a JUMPDEST after it; PUSH3 caps the addressable target.
+        if not 0x41 <= code_size <= MAX_PATTERN_CODE_SIZE:
+            raise ValueError(
+                f"code_size must be in [0x41, {MAX_PATTERN_CODE_SIZE:#x}],"
+                f" got {code_size:#x}"
+            )
         # Each MCOPY doubles the JUMPDEST-filled span (the first copy is
         # MCOPY(32, 0, 32), since 1 << 5 = 32) until it covers code_size.
         code = Op.MSTORE(0, bytes(Op.JUMPDEST * 32))
         for size in (1 << s for s in range(5, (code_size - 1).bit_length())):
             code += Op.MCOPY(size, 0, size)
 
-        # Runtime entry: JUMP to final JUMPDEST, then STOP.
-        entry = Op.JUMP(code_size - 1)
+        # Runtime entry: JUMP to final JUMPDEST, then STOP. Fixed-width
+        # PUSH2 below the 0x010000 boundary (see class docstring).
+        entry = Op.JUMP(_jump_target_push(code_size))
         entry += Op.JUMPDEST * (32 - len(entry))  # Padding
 
         code += Op.MSTORE(0, bytes(entry))
@@ -180,7 +216,7 @@ class JochemnetPredeployContractInitcode(ContractInitcode):
     def execution_code(self) -> Bytecode:
         """Jump to the final JUMPDEST, then halt."""
         # Entry jumps to the final JUMPDEST, then halts.
-        return Op.JUMP(Op.PUSH2(self.code_size - 1)) + Op.JUMPDEST
+        return Op.JUMP(_jump_target_push(self.code_size)) + Op.JUMPDEST
 
 
 class AddressSource(ABC):
