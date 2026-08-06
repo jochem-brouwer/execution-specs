@@ -953,7 +953,7 @@ test = [
 requires-dist = [
     { name = "cryptography", specifier = ">=45.0.1,<46" },
     { name = "ethash", marker = "extra == 'optimized'", specifier = ">=1.1.0,<2" },
-    { name = "ethereum-rlp", specifier = ">=0.1.6,<0.2" },
+    { name = "ethereum-rlp", git = "https://github.com/jochem-brouwer/ethereum-rlp.git?rev=ab4e475f248ca684b56678e414424c6c95d83924" },
     { name = "ethereum-types", specifier = ">=0.4.1,<0.5" },
     { name = "libcst", specifier = ">=1.8,<2" },
     { name = "platformdirs", specifier = ">=4.2,<5" },
@@ -1123,7 +1123,7 @@ requires-dist = [
     { name = "eth-remerkleable", specifier = "==0.1.31" },
     { name = "ethereum-execution", editable = "." },
     { name = "ethereum-hive", specifier = ">=0.1.0a5,<1.0.0" },
-    { name = "ethereum-rlp", specifier = ">=0.1.6,<0.2" },
+    { name = "ethereum-rlp", git = "https://github.com/jochem-brouwer/ethereum-rlp.git?rev=ab4e475f248ca684b56678e414424c6c95d83924" },
     { name = "ethereum-types", specifier = ">=0.4.1,<0.5" },
     { name = "filelock", specifier = ">=3.15.1,<4" },
     { name = "gitpython", specifier = ">=3.1.31,<4" },
@@ -1180,15 +1180,11 @@ wheels = [
 
 [[package]]
 name = "ethereum-rlp"
-version = "0.1.6"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.7"
+source = { git = "https://github.com/jochem-brouwer/ethereum-rlp.git?rev=ab4e475f248ca684b56678e414424c6c95d83924#ab4e475f248ca684b56678e414424c6c95d83924" }
 dependencies = [
     { name = "ethereum-types" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/54/55/1fab3dea8f912459751cb39ad4500e165344963af2dbd5fa699befe3e8d4/ethereum_rlp-0.1.6.tar.gz", hash = "sha256:ede36f53b53c8da21f19259a676eed8790950d47f0b42cb928ac8a3c562282f3", size = 14015, upload-time = "2026-06-03T23:12:02.472Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/ab/b9b2ff2d37b7feabe3dcdee7d5170cf0e71b849a073bda8857c0afb54962/ethereum_rlp-0.1.6-py3-none-any.whl", hash = "sha256:f4144caa96b975720c62b967bbfd6c98601e95ee3c36457ece11ef4ce0cffa04", size = 9944, upload-time = "2026-06-03T23:12:01.492Z" },
 ]
 
 [[package]]
