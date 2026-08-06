@@ -541,3 +541,18 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 ethereum-execution-testing = { workspace = true }
+# Patched RLP decoder: bounds the length probe to 9 bytes instead of slicing the
+# whole remaining buffer once per item, which made decoding a WIDE list quadratic
+# (16x measured on large block access lists during stateful benchmark filling).
+#
+# Pinned by rev, not by version or branch, for two reasons: `ethereum-rlp` is a
+# PyPI dependency rather than a workspace member, so it cannot be carried as a
+# commit on this branch; and the patched fork reports the same __version__ as
+# upstream ("0.1.7"), so a resolver working from the version alone would happily
+# install the unpatched wheel. Verify with
+#   python -c "import ethereum_rlp.rlp as r; print(r.ITEM_LENGTH_PREFIX_MAX)"
+# which must print 9.
+#
+# Upstream tracking: not yet merged into ethereum/ethereum-rlp (master @ 2037ce5).
+# Drop this source once it lands and bump the version constraint instead.
+ethereum-rlp = { git = "https://github.com/jochem-brouwer/ethereum-rlp.git", rev = "ab4e475f248ca684b56678e414424c6c95d83924" }

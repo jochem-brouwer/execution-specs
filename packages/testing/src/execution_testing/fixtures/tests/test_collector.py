@@ -467,6 +467,7 @@ class TestStreamingWrites:
 
         collector = FixtureCollector(
             output_dir=output_dir,
+            fill_static_tests=False,
             single_fixture_per_file=False,
             filler_path=filler_path,
             generate_index=False,
@@ -500,6 +501,7 @@ class TestStreamingWrites:
         """A multi-megabyte fixture must still round-trip byte-identically."""
         collector = FixtureCollector(
             output_dir=output_dir,
+            fill_static_tests=False,
             single_fixture_per_file=False,
             filler_path=filler_path,
             generate_index=False,
@@ -531,6 +533,7 @@ class TestStreamingWrites:
         first_info = _make_info("first", module_path)
         collector = FixtureCollector(
             output_dir=output_dir,
+            fill_static_tests=False,
             single_fixture_per_file=False,
             filler_path=filler_path,
             generate_index=False,
@@ -543,6 +546,7 @@ class TestStreamingWrites:
         second_info = _make_info("second", module_path)
         collector2 = FixtureCollector(
             output_dir=output_dir,
+            fill_static_tests=False,
             single_fixture_per_file=False,
             filler_path=filler_path,
             generate_index=False,
@@ -575,6 +579,7 @@ class TestStreamingWrites:
         """No part, index or seed file may survive a merge."""
         collector = FixtureCollector(
             output_dir=output_dir,
+            fill_static_tests=False,
             single_fixture_per_file=False,
             filler_path=filler_path,
             generate_index=False,
