@@ -295,7 +295,9 @@ class ClientBackend:
         assert np_version is not None
         assert fcu_version is not None
 
-        receipts = self._fetch_receipts(txs)
+        receipts = self._fetch_receipts(
+            txs, get_payload_response.execution_payload.block_hash
+        )
         result = self._build_result(
             built_payload=get_payload_response.execution_payload,
             execution_requests=get_payload_response.execution_requests,
@@ -432,26 +434,50 @@ class ClientBackend:
         )
 
     def _fetch_receipts(
-        self, txs: List[Transaction]
+        self, txs: List[Transaction], block_hash: Hash
     ) -> List[TransactionReceipt]:
         """
-        Fetch receipts for every transaction in the block, batched.
+        Fetch every receipt in the block with a single `eth_getBlockReceipts`.
 
-        One request per transaction makes fill time latency-bound: a block
-        of 5,000 transactions costs 5,000 sequential round trips, which
-        against a non-local client dominates everything else the fill does
-        (the client executes such a block in ~150ms).
+        Asking for receipts one transaction at a time is quadratic in the
+        block's transaction count: a client resolves a single receipt by
+        loading the block's whole receipt list and returning one entry from
+        it, so N lookups do N x O(N) work. Batching removes the round trips
+        but not that cost -- the batch is one request, and the client still
+        does the same work N times.
+
+        Measured against geth on a block of plain transfers:
+
+            transactions   per-tx batch   getBlockReceipts
+                   1,000         0.47s              0.02s
+                   4,000         5.43s              0.08s
+                   8,000        19.94s              0.17s
+
+        The per-transaction path scales at ~n^1.7 while this one is linear, so
+        at the 16,000-transaction blocks the stateful benchmarks build it is
+        the difference between ~80s and well under a second -- roughly half the
+        wall clock of a benchmark fill.
         """
         if not txs:
             return []
-        receipt_data_list = self.eth_rpc.get_transaction_receipts(
-            [tx.hash for tx in txs]
-        )
+        receipt_data_list = self.eth_rpc.get_block_receipts(block_hash)
+        if receipt_data_list is None:
+            raise RuntimeError(f"No receipts returned for block {block_hash}")
+        if len(receipt_data_list) != len(txs):
+            raise RuntimeError(
+                f"Block {block_hash} returned {len(receipt_data_list)} "
+                f"receipts for {len(txs)} transactions"
+            )
         receipts: List[TransactionReceipt] = []
         for tx, receipt_data in zip(txs, receipt_data_list, strict=True):
-            if receipt_data is None:
+            # eth_getBlockReceipts returns receipts in transaction order, but
+            # the previous per-hash path matched them explicitly; keep that
+            # guarantee rather than trusting ordering silently.
+            returned = receipt_data.get("transactionHash")
+            if returned is not None and Hash(returned) != tx.hash:
                 raise RuntimeError(
-                    f"No receipt found for transaction {tx.hash}"
+                    f"Receipt order mismatch: expected {tx.hash}, "
+                    f"got {returned}"
                 )
             receipts.append(TransactionReceipt.model_validate(receipt_data))
         return receipts
