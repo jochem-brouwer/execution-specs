@@ -1,18 +1,22 @@
 """
-Benchmark the largest memory footprint a single transaction can force.
-
-Both scenarios are bounded by the [EIP-7825 transaction gas limit
-cap](https://eips.ethereum.org/EIPS/eip-7825):
+Benchmark the largest memory footprint a single transaction can force, bounded
+by the [EIP-7825 transaction gas limit
+cap](https://eips.ethereum.org/EIPS/eip-7825).
 
 - ``test_single_frame_memory_expansion`` grows one frame's memory until the
   gas runs out. The quadratic memory-expansion term makes a single frame the
   worst way to buy memory, capping it at a few MiB.
 - ``test_nested_frame_memory_expansion`` spends the same gas across nested
-  self-calls. Every fresh frame resets memory to zero and pays the expansion
-  term from scratch, so splitting the allocation trades the quadratic term for
-  the linear one and multiplies the simultaneously-live footprint several-fold.
-  The depth is bounded by the 63/64 gas-forwarding rule long before the call
-  stack limit.
+  self-calls, maximizing memory that is *simultaneously live*. Every fresh
+  frame resets memory to zero and pays the expansion term from scratch, so
+  splitting the allocation trades the quadratic term for the linear one and
+  multiplies the live footprint several-fold. The depth is bounded by the
+  63/64 gas-forwarding rule long before the call-stack limit.
+- ``test_cumulative_memory_expansion`` maximizes memory *touched over the whole
+  transaction* (freed and re-touched). Sequential calls each expand a small,
+  near-linear-cost region and return, so the returned gas is reused and the
+  63/64 rule is not a loss; the live footprint at any instant stays tiny while
+  the cumulative bytes expanded reach into the hundreds of MiB.
 """
 
 import pytest
@@ -152,14 +156,79 @@ def test_nested_frame_memory_expansion(
         ),
     )
 
-    # A frame cannot forward the 1/64 of gas it retains; once the recursive
-    # call returns, loop to burn the remainder so the transaction spends the
-    # whole benchmark budget (peak memory is already reached during descent).
-    code = frame + Op.JUMPDEST + Op.JUMP(len(frame))
-    contract = pre.deploy_contract(code=code)
+    # A frame cannot forward the 1/64 of gas it retains. Once the recursive
+    # call returns, keep growing this frame's own memory until out of gas, so
+    # the whole benchmark budget is spent on memory work rather than spinning.
+    # This does not raise the peak (deeper frames are already freed) but keeps
+    # every leftover gas unit attributable to memory expansion.
+    grow_until_oog = Op.JUMPDEST + Op.MSTORE(Op.MSIZE, 0) + Op.JUMP(len(frame))
+    contract = pre.deploy_contract(code=frame + grow_until_oog)
     tx = Transaction(
         to=contract,
         sender=pre.fund_eoa(),
         data=Hash(initial_words),
     )
     benchmark_test(pre=pre, tx=tx)
+
+
+# Rough per-call gas overhead of the driver loop: a warm CALL plus the
+# argument pushes and the worker's own prologue. Used only to pick the
+# gas-optimal expansion size; the loop itself is gas-adaptive.
+SEQUENTIAL_CALL_OVERHEAD = 150
+
+
+def cumulative_worker_words(fork: Fork) -> int:
+    """
+    Return the per-call expansion size (words) that maximizes total memory
+    touched across many sequential calls.
+
+    Each call pays ``memory_expansion + overhead`` for ``words`` words, so the
+    best size minimizes gas-per-word: too small wastes the fixed call overhead,
+    too large pays the quadratic term. The size is read off the fork's own
+    memory pricing so it tracks any future repricing.
+    """
+    mem_gas = fork.memory_expansion_gas_calculator()
+    best_words, best_rate = 1, float("inf")
+    for words in range(1, 4001):
+        call_gas = mem_gas(new_bytes=words * 32) + SEQUENTIAL_CALL_OVERHEAD
+        rate = call_gas / words
+        if rate < best_rate:
+            best_words, best_rate = words, rate
+    return best_words
+
+
+@pytest.mark.valid_from("Osaka")
+def test_cumulative_memory_expansion(
+    benchmark_test: BenchmarkTestFiller,
+    pre: Alloc,
+    fork: Fork,
+) -> None:
+    """Touch the most cumulative memory across many freed call frames."""
+    words = cumulative_worker_words(fork)
+
+    # The worker expands to `words` in a single store, then returns so its
+    # memory is freed. Because it returns rather than recursing, the gas the
+    # driver forwarded but the worker did not spend flows back to the driver,
+    # so sequential calls are not taxed by the 63/64 forwarding rule.
+    worker = pre.deploy_contract(
+        code=Op.MSTORE((words - 1) * 32, 0) + Op.STOP,
+    )
+
+    # The driver calls the worker in a loop until it runs out of gas.
+    benchmark_test(
+        pre=pre,
+        target_opcode=Op.MSTORE,
+        code_generator=JumpLoopGenerator(
+            attack_block=Op.POP(
+                Op.CALL(
+                    gas=Op.GAS,
+                    address=worker,
+                    value=0,
+                    args_offset=0,
+                    args_size=0,
+                    ret_offset=0,
+                    ret_size=0,
+                )
+            ),
+        ),
+    )
