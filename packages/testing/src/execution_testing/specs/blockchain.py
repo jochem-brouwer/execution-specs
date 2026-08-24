@@ -1,5 +1,7 @@
 """Ethereum blockchain test spec definition and filler."""
 
+import json
+import os
 from pprint import pprint
 from typing import (
     Any,
@@ -181,6 +183,62 @@ def payload_metadata_to_fixture(
         forkchoice_updated_version=meta.forkchoice_updated_version,
         phase=phase,
     )
+
+
+def engine_request_lines(
+    meta: EnginePayloadMetadata, client_hash: Hash
+) -> tuple[str, str]:
+    """
+    Serialise a built payload as ``engine_newPayloadVX`` and
+    ``engine_forkchoiceUpdatedVY`` JSON-RPC request lines.
+
+    Used by the stateful filler's per-block streaming path so a large
+    accumulate-state run can write each payload to disk (in the replayable
+    benchmarkoor ``.request`` format) instead of holding every block's
+    block-access-list in memory until the whole fixture is assembled.
+    """
+    response = meta.payload_response
+    version = meta.new_payload_version
+    params: List[Any] = [
+        response.execution_payload.model_dump(mode="json", by_alias=True)
+    ]
+    if version >= 3:
+        blob_hashes = (
+            response.blobs_bundle.blob_versioned_hashes()
+            if response.blobs_bundle is not None
+            else []
+        )
+        params.append([str(h) for h in blob_hashes])
+        params.append(str(meta.parent_beacon_block_root))
+    if version >= 4 and response.execution_requests is not None:
+        params.append([str(r) for r in response.execution_requests])
+    new_payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": f"engine_newPayloadV{version}",
+            "params": params,
+        }
+    )
+    head = str(client_hash)
+    forkchoice = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": (
+                f"engine_forkchoiceUpdatedV{meta.forkchoice_updated_version}"
+            ),
+            "params": [
+                {
+                    "headBlockHash": head,
+                    "safeBlockHash": head,
+                    "finalizedBlockHash": head,
+                },
+                None,
+            ],
+        }
+    )
+    return new_payload, forkchoice
 
 
 class Header(CamelModel):
@@ -1663,6 +1721,13 @@ class BlockchainTest(BaseTest):
         execution_payloads: List[FixtureEngineNewPayload] = []
         # Aligned 1:1 with execution_payloads; None when no trace.
         execution_opcode_counts: List[Dict[str, int] | None] = []
+        # Per-block streaming: when BLOATNET_STREAM_REQUESTS names a path, each
+        # payload is written there as replayable JSON-RPC lines and NOT kept in
+        # the lists above. A large accumulate-state deploy (100k max-code-size
+        # contracts) otherwise holds every block's block-access-list in memory
+        # and OOMs before the fixture is ever written.
+        stream_path = os.environ.get("BLOATNET_STREAM_REQUESTS")
+        stream_file = open(stream_path, "w") if stream_path else None
         head_hash = start_block_hash
         benchmark_gas_used: int | None = None
         benchmark_block_gas_used: int | None = None
@@ -1689,10 +1754,18 @@ class BlockchainTest(BaseTest):
             client_hash = Hash(
                 built_block.engine_payload.payload_response.execution_payload.block_hash
             )
+            if stream_file is not None:
+                new_payload_line, forkchoice_line = engine_request_lines(
+                    built_block.engine_payload, client_hash
+                )
+                stream_file.write(f"{new_payload_line}\n{forkchoice_line}\n")
+                stream_file.flush()
             if payload.phase == TestPhase.SETUP:
-                setup_payloads.append(payload)
+                if stream_file is None:
+                    setup_payloads.append(payload)
             else:
-                execution_payloads.append(payload)
+                if stream_file is None:
+                    execution_payloads.append(payload)
                 block_opcode_count = t8n.extract_block_opcode_count(
                     client_hash,
                     len(
@@ -1727,6 +1800,9 @@ class BlockchainTest(BaseTest):
                 },
             )
             head_hash = client_hash
+
+        if stream_file is not None:
+            stream_file.close()
 
         if self.post.root:
             got_alloc = t8n.get_post_state_alloc(self.post)
