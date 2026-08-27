@@ -146,12 +146,22 @@ class BaseFixture(CamelModel):
 
     @cached_property
     def hash(self) -> str:
-        """Returns the hash of the fixture."""
-        json_str = json.dumps(
-            self.json_dict, sort_keys=True, separators=(",", ":")
-        )
-        h = hashlib.sha256(json_str.encode("utf-8")).hexdigest()
-        return f"0x{h}"
+        """
+        Returns the hash of the fixture.
+
+        Feeds the encoder's chunks straight into the digest rather than
+        building the document first. `json.dumps` would materialise the
+        whole fixture as one string and then again as UTF-8 bytes, on top
+        of the `json_dict` copy it is already holding -- three full-size
+        copies at once. Benchmark stateful fixtures reach many GB, where
+        that alone exhausts the host. `iterencode` emits the identical
+        character stream, so the digest is unchanged.
+        """
+        h = hashlib.sha256()
+        encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"))
+        for chunk in encoder.iterencode(self.json_dict):
+            h.update(chunk.encode("utf-8"))
+        return f"0x{h.hexdigest()}"
 
     def json_dict_with_info(self, hash_only: bool = False) -> Dict[str, Any]:
         """Return JSON representation of the fixture with the info field."""
