@@ -450,7 +450,7 @@ class FixtureCollector:
         part_path = self._next_part_path(fixture_path)
         part_path.parent.mkdir(parents=True, exist_ok=True)
         with open(part_path, "w") as part_f:
-            json.dump(fixture.json_dict_with_info(), part_f, indent=4)
+            fixture.write_json(part_f)
 
         f = self._get_partial_fixture_file(fixture_path)
         f.write(json.dumps({"k": fixture_id, "p": part_path.name}) + "\n")
