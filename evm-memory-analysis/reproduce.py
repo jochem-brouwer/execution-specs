@@ -152,6 +152,43 @@ def eip7923_nested_capped(cap_pages: int, overhead: int = 200):
 # ---------------------------------------------------------------------------
 # 5. EIP-7686 -- linear price + gas-reservation forwarding
 # ---------------------------------------------------------------------------
+def linear_only(gas_per_word: int = 3):
+    """
+    Keep only today's LINEAR term (3 gas / 32-byte word), drop the quadratic;
+    no cap, no reservation. With no quadratic to escape, nesting and churn stop
+    helping, so single = nested = cumulative. Report: 170 MiB at 3 gas/word.
+    """
+    words = GAS // gas_per_word
+    size = words * WORD
+    print(f"  price                  : {gas_per_word} gas/word "
+          f"= {gas_per_word / WORD:.4f} gas/byte")
+    print(f"  single = nested = cumul: {words:,} words = {mib(size):.1f} MiB")
+    print(f"  -> ceiling             : {mib(size):.0f} MiB   [report: 170 MiB]")
+    return size
+
+
+def spectrum():
+    """Once the quadratic is gone, max memory = GAS / gas-per-byte."""
+    rows = [
+        ("linear 3/word (today's linear term)", 3 / 32),
+        ("EIP-7923  100 gas / 4096 B page", 100 / 4096),
+        ("EIP-7686  reserve 1 gas / byte", 1.0),
+    ]
+    print(f"  {'model':<36}{'gas/byte':>9}{'gas/word':>9}{'ceiling':>11}")
+    for name, gpb in rows:
+        print(f"  {name:<36}{gpb:>9.4f}{gpb * 32:>9.2f}"
+              f"{mib(GAS / gpb):>8.1f} MiB")
+    print("  --- to land on a target, invert: gas/byte = GAS / target ---")
+    for t in (18.3, 2.8):
+        gpb = GAS / (t * 1024 * 1024)
+        print(f"  land on {t} MiB{'':<20}{gpb:>9.2f}{gpb * 32:>9.0f}")
+    ratio = 1 / (3 / 32)
+    print(f"\n  EIP-7686 reserves 1 gas/byte = {ratio:.2f} = 32/3 x the linear "
+          "cost (3/32 gas/byte):")
+    print("  pay the cheap linear rate, reserve at 32/3x it -> 170 MiB "
+          "collapses to a 16 MiB (N gas -> N byte) bound.")
+
+
 def eip7686(k: int = 1):
     """
     EIP-7686 invariant: reserve k gas per live byte on forwarding, so total
@@ -204,11 +241,18 @@ def main() -> None:
     print("  -> k=6 pins the ceiling near today's single frame "
           "[report: ~2.7 MiB]")
 
-    hr("COMPARISON MATRIX (report Section 06)")
+    hr("6. LINEAR-ONLY (drop quadratic, keep today's 3/word; no cap)")
+    linear_only()
+
+    hr("7. THE KNOB: max memory = GAS / gas-per-byte")
+    spectrum()
+
+    hr("COMPARISON MATRIX (report Section 07)")
     single_mib = mib(single_w * WORD)
     nested_mib = mib(nested_w * WORD)
     rows = [
         ("today (quadratic)", f"{single_mib:.1f}", f"{nested_mib:.1f}", "126"),
+        ("linear-only 3/word (no cap)", "170", "170", "170"),
         ("EIP-7923 no cap", "~654", "~654", "~654"),
         ("EIP-7923 +64MiB global cap", "<=64", "<=64", "<=64"),
         ("EIP-7923 +2.8MiB/frame cap", "2.8",

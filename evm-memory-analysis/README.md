@@ -12,7 +12,7 @@ Branch: `evm-memory-limit-tests` (off `forks/amsterdam`).
 | Class | What | How to verify |
 |-------|------|---------------|
 | **Fill-verified** | Today's max memory under the *current* (quadratic) rules — single-frame, nested-peak, cumulative. | Actual state/blockchain fills executed by the in-repo EELS EVM (the benchmarks below). |
-| **Analytical** | Projections for **EIP-7923** and **EIP-7686**, and the cap trade-offs. Those EIPs are **not implemented** in the spec, so their numbers follow from the EIPs' *stated formulas*, encoded in [`models.py`](models.py) and printed by [`reproduce.py`](reproduce.py). |
+| **Analytical** | Projections for **EIP-7923**, **EIP-7686**, linear-only, and the cap trade-offs. Those EIPs are **not implemented** in the spec. | Numbers follow from the EIPs' *stated formulas*, encoded in [`models.py`](models.py) and printed by [`reproduce.py`](reproduce.py). |
 
 The two classes agree on the current-rules numbers: the analytical model in
 `reproduce.py` predicts the same single/nested/cumulative maxima that the fills
@@ -39,6 +39,14 @@ function map:
 | EIP-7923, cap to bind ≤18 MiB | 14 pages (56 KiB) | `eip7923_nested_capped()` sweep |
 | EIP-7686 ceiling (k=1) | 16.0 MiB, ~9% of gas paid | `eip7686(1)` |
 | EIP-7686 ceiling (k=6) | 2.7 MiB | `eip7686(6)` |
+| Linear-only, today's 3/word, no cap | 170 MiB (single = nested = cumulative) | `linear_only()` |
+| Gas-per-byte spectrum (the knob) + 32/3 | table | `spectrum()` |
+
+Key relation (`spectrum()`): once the quadratic is removed, **max memory =
+GAS / gas-per-byte**, so every model is one choice of that rate — linear 3/word
+= 170 MiB, EIP-7923 100/page = 654 MiB, EIP-7686 reservation 1 gas/byte = 16 MiB.
+EIP-7686's reservation is 32/3 ≈ 10.7× the linear cost: it pays the cheap rate
+but reserves at the steep one, decoupling price from ceiling.
 
 ## 2. Fill-verified figures — run the benchmarks
 

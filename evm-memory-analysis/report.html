@@ -402,9 +402,38 @@ max_call_gas(gas, mem_bytes) = gas − max(gas/64, mem_bytes)   <span class="c">
     </div>
   </section>
 
-  <!-- 06 comparison matrix -->
+  <!-- 06 the knob -->
+  <section id="knob">
+    <div class="sechead"><span class="secno">06</span><h2>The knob is gas-per-byte</h2></div>
+    <div class="prose">
+      <p><strong>Take the plainest step first:</strong> keep only today's <em>linear</em> term — <span class="mono">3 gas / 32-byte word</span> — drop the quadratic, with no cap and no reservation. A single frame can then allocate <strong>~170 MiB</strong>, and because there is no quadratic left to escape, nesting and churn stop helping — single, total and cumulative all land on the same <strong>170 MiB</strong>.</p>
+      <p>That exposes the general law. Once the quadratic is gone, the maximum memory is simply:</p>
+    </div>
+    <div class="formula" style="max-width:46ch; text-align:center; font-size:1.05rem">max memory = GAS ÷ (gas per byte)</div>
+    <div class="prose">
+      <p>Every proposal is one choice of that single number. The quadratic's real job was to make gas-per-byte <em>rise with size</em> — self-limiting; a flat rate cannot, so a flat rate buys a flat ceiling.</p>
+    </div>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Pricing</th><th class="num">gas / byte</th><th class="num">gas / word</th><th class="num">Ceiling</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlab">Linear only <small>today's 3/word term</small></td><td class="num">0.094</td><td class="num">3.0</td><td class="num">170 MiB</td></tr>
+          <tr><td class="rowlab">EIP-7923 <small>100 gas / 4096 B</small></td><td class="num">0.024</td><td class="num">0.78</td><td class="num">654 MiB</td></tr>
+          <tr><td class="rowlab">EIP-7686 <small>reserve 1 gas / byte</small></td><td class="num">1.000</td><td class="num">32.0</td><td class="num">16 MiB</td></tr>
+          <tr style="color:var(--muted)"><td class="rowlab" style="font-weight:400">— to land on today's peak</td><td class="num">0.87</td><td class="num">28</td><td class="num">18.3 MiB</td></tr>
+          <tr style="color:var(--muted)"><td class="rowlab" style="font-weight:400">— to land on today's single frame</td><td class="num">5.71</td><td class="num">183</td><td class="num">2.8 MiB</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="box keyline" style="margin-top:1.3rem; background:var(--accent-soft); border-color:transparent">
+      <p style="margin:0 0 .4rem"><strong>Why EIP-7686 is "off by 32/3" — and why that is the whole point.</strong></p>
+      <p style="margin:0; font-size:.96rem">EIP-7686 <em>charges</em> the cheap linear rate (<span class="mono">3/32</span> gas/byte) but <em>reserves</em> <span class="mono">1 gas/byte</span> on forwarding — exactly <span class="mono">32/3 ≈ 10.7×</span> the linear cost. The reservation, not the payment, sets the ceiling: the same linear price that alone yields 170 MiB collapses to a 16 MiB <span class="mono">N gas ⇒ N byte</span> bound. It <strong>decouples what you pay from what bounds you</strong> — cheap to use, tight ceiling. Pure linear pricing ties the two together, so it can be cheap <em>or</em> bounded, never both.</p>
+    </div>
+  </section>
+
+  <!-- 07 comparison matrix -->
   <section id="matrix">
-    <div class="sechead"><span class="secno">06</span><h2>Side by side</h2></div>
+    <div class="sechead"><span class="secno">07</span><h2>Side by side</h2></div>
     <div class="scroller">
       <table class="matrix">
         <thead>
@@ -425,6 +454,13 @@ max_call_gas(gas, mem_bytes) = gas − max(gas/64, mem_bytes)   <span class="c">
             <td><span class="chip good"><span class="dot"></span>Yes</span></td>
             <td><span class="chip good"><span class="dot"></span>Yes (by price)</span></td>
             <td><span class="chip neu">baseline</span></td>
+          </tr>
+          <tr>
+            <td class="rowlab">Linear only <small>3/word, no cap</small></td>
+            <td class="num">170 MiB</td><td class="num">170 MiB</td><td class="num">170 MiB</td>
+            <td><span class="chip good"><span class="dot"></span>Yes</span></td>
+            <td><span class="chip warn"><span class="dot"></span>Loose (170)</span></td>
+            <td><span class="chip warn"><span class="dot"></span>≈10× RAM</span></td>
           </tr>
           <tr>
             <td class="rowlab">EIP-7923 <small>no cap</small></td>
@@ -462,7 +498,7 @@ max_call_gas(gas, mem_bytes) = gas − max(gas/64, mem_bytes)   <span class="c">
 
   <!-- 07 breakage -->
   <section id="breakage">
-    <div class="sechead"><span class="secno">07</span><h2>What breaks — compatibility</h2></div>
+    <div class="sechead"><span class="secno">08</span><h2>What breaks — compatibility</h2></div>
     <div class="two">
       <div class="box">
         <p style="margin:0 0 .5rem"><span class="chip warn"><span class="dot"></span>EIP-7923 · price</span></p>
@@ -487,7 +523,7 @@ max_call_gas(gas, mem_bytes) = gas − max(gas/64, mem_bytes)   <span class="c">
 
   <!-- 08 recommendation -->
   <section id="recommendation">
-    <div class="sechead"><span class="secno">08</span><h2>Recommendation</h2></div>
+    <div class="sechead"><span class="secno">09</span><h2>Recommendation</h2></div>
     <div class="prose">
       <p>You cannot have all three of {cheap small usage, linear/predictable, bounded aggregate} from a <em>price</em> alone — pick the design that adds a separate bound. The reservation model does this best.</p>
     </div>
@@ -511,7 +547,7 @@ max_call_gas(gas, mem_bytes) = gas − max(gas/64, mem_bytes)   <span class="c">
   </section>
 
   <section id="reproduce" style="border-bottom:0">
-    <div class="sechead"><span class="secno">09</span><h2>Reproduce every number</h2></div>
+    <div class="sechead"><span class="secno">10</span><h2>Reproduce every number</h2></div>
     <div class="prose">
       <p>None of these figures is an unverifiable estimate. Everything lives on branch <span class="mono">evm-memory-limit-tests</span> of execution-specs, split into two classes of evidence: today's maxima are <strong>filled by the reference EVM</strong>; the EIP-7923 / EIP-7686 projections are <strong>analytical</strong> (those EIPs aren't implemented), derived from their published formulas and <em>calibrated against the fills</em> — the same model predicts the fill-verified current-rules numbers before extending to the new pricing.</p>
     </div>
@@ -526,7 +562,7 @@ scenario/test_max_memory_allocation.py \
       <div class="box">
         <p style="margin:0 0 .5rem"><span class="chip warn"><span class="dot"></span>Analytical</span> &nbsp;EIP-7923 / EIP-7686</p>
         <div class="formula">python3 evm-memory-analysis/reproduce.py</div>
-        <p style="font-size:.9rem;color:var(--muted);margin:.7rem 0 0">Bare Python, no deps. Prints every figure beside its report value, plus the matrix in §06. Formulas in <span class="mono">models.py</span>; figure-to-command map in <span class="mono">README.md</span>.</p>
+        <p style="font-size:.9rem;color:var(--muted);margin:.7rem 0 0">Bare Python, no deps. Prints every figure beside its report value, plus the matrix in §07. Formulas in <span class="mono">models.py</span>; figure-to-command map in <span class="mono">README.md</span>.</p>
       </div>
     </div>
   </section>
