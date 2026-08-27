@@ -1,0 +1,550 @@
+<title>What Can We Do About EVM Memory</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --paper:#ffffff;
+    --ground:#f5f7f9;
+    --panel:#eef2f5;
+    --ink:#14181e;
+    --muted:#586572;
+    --faint:#8b95a1;
+    --border:#e0e6ec;
+    --border-strong:#cdd6de;
+    --accent:#0e6e77;
+    --accent-ink:#0a565d;
+    --accent-soft:#e0f0f1;
+    --good:#2e7d4f; --good-soft:#e3f2e8;
+    --warn:#a15c09; --warn-soft:#f6ecdc;
+    --bad:#b3261e; --bad-soft:#f7e3e1;
+    --shadow:0 1px 2px rgba(20,24,30,.05), 0 8px 24px rgba(20,24,30,.05);
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --paper:#161b22;
+      --ground:#0e1116;
+      --panel:#1b212b;
+      --ink:#e7ebf1;
+      --muted:#9aa4b0;
+      --faint:#6c7783;
+      --border:#28303a;
+      --border-strong:#39434f;
+      --accent:#3bb7c0;
+      --accent-ink:#7ad6dc;
+      --accent-soft:#0f3439;
+      --good:#4cbd80; --good-soft:#123021;
+      --warn:#d29033; --warn-soft:#33280f;
+      --bad:#e06a61; --bad-soft:#3a1a17;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#161b22;
+    --ground:#0e1116;
+    --panel:#1b212b;
+    --ink:#e7ebf1;
+    --muted:#9aa4b0;
+    --faint:#6c7783;
+    --border:#28303a;
+    --border-strong:#39434f;
+    --accent:#3bb7c0;
+    --accent-ink:#7ad6dc;
+    --accent-soft:#0f3439;
+    --good:#4cbd80; --good-soft:#123021;
+    --warn:#d29033; --warn-soft:#33280f;
+    --bad:#e06a61; --bad-soft:#3a1a17;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body {
+    margin:0;
+    background:var(--ground);
+    color:var(--ink);
+    font-family:"Newsreader", Georgia, serif;
+    font-size:18px;
+    line-height:1.62;
+    font-optical-sizing:auto;
+  }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  .prose { max-width:68ch; }
+
+  h1,h2,h3,h4,.eyebrow,.stat-num,th,.chip,.mono,.tag,.toc a,.rec-title {
+    font-family:"Archivo", "Helvetica Neue", Arial, sans-serif;
+  }
+  .mono, code, .num { font-family:"IBM Plex Mono", ui-monospace, Menlo, monospace; }
+  .num { font-variant-numeric:tabular-nums; }
+
+  h2 { font-size:1.65rem; font-weight:700; letter-spacing:-.01em; line-height:1.15; margin:0 0 .2em; text-wrap:balance; }
+  h3 { font-size:1.16rem; font-weight:600; letter-spacing:-.005em; margin:2em 0 .4em; }
+  p { margin:0 0 1em; }
+  a { color:var(--accent-ink); text-decoration:underline; text-underline-offset:2px; text-decoration-thickness:.06em; }
+  strong { font-weight:500; color:var(--ink); }
+  .prose strong { font-weight:600; }
+
+  .eyebrow {
+    font-size:.72rem; font-weight:600; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--accent-ink); margin:0 0 .5rem;
+  }
+
+  /* ---- header ---- */
+  header.hero {
+    border-bottom:1px solid var(--border);
+    background:linear-gradient(180deg, var(--paper), var(--ground));
+  }
+  .hero-inner { padding:48px 0 40px; }
+  .kicker {
+    display:inline-flex; align-items:center; gap:.55rem;
+    font-family:"IBM Plex Mono", monospace; font-size:.72rem; letter-spacing:.06em;
+    color:var(--muted); text-transform:uppercase;
+    border:1px solid var(--border); border-radius:999px; padding:.3rem .7rem; background:var(--paper);
+  }
+  .kicker b { color:var(--accent-ink); font-weight:600; }
+  h1 {
+    font-size:clamp(2.1rem, 5.2vw, 3.4rem); font-weight:700; line-height:1.02;
+    letter-spacing:-.025em; margin:1rem 0 .5rem; text-wrap:balance; max-width:16ch;
+  }
+  .dek { font-size:1.2rem; color:var(--muted); max-width:60ch; margin:0; }
+  .meta-row {
+    display:flex; flex-wrap:wrap; gap:.5rem 1.4rem; margin-top:1.6rem;
+    font-family:"IBM Plex Mono", monospace; font-size:.8rem; color:var(--muted);
+  }
+  .meta-row span b { color:var(--ink); font-weight:500; }
+
+  /* ---- stat row ---- */
+  .statband { background:var(--paper); border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); }
+  .stat { padding:26px 24px; border-right:1px solid var(--border); }
+  .stat:last-child { border-right:0; }
+  .stat .lab { font-family:"IBM Plex Mono",monospace; font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .stat-num { font-size:2.5rem; font-weight:700; letter-spacing:-.02em; line-height:1; margin:.35rem 0 .3rem; color:var(--accent-ink); }
+  .stat-num .u { font-size:1.1rem; color:var(--muted); margin-left:.15rem; font-weight:600; }
+  .stat .sub { font-size:.92rem; color:var(--muted); }
+
+  /* ---- sections ---- */
+  section { padding:52px 0; border-bottom:1px solid var(--border); }
+  .sechead { display:flex; align-items:baseline; gap:.9rem; margin-bottom:1.4rem; }
+  .secno {
+    font-family:"IBM Plex Mono",monospace; font-size:.82rem; font-weight:600;
+    color:var(--accent); border:1px solid var(--border-strong); border-radius:6px;
+    padding:.12rem .45rem; flex:none; margin-top:.2rem;
+  }
+
+  /* ---- callout / boxes ---- */
+  .box { background:var(--paper); border:1px solid var(--border); border-radius:12px; padding:22px 24px; box-shadow:var(--shadow); }
+  .box + .box { margin-top:1rem; }
+  .rec {
+    background:var(--accent-soft); border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius:14px; padding:24px 26px;
+  }
+  .rec-title { font-weight:700; font-size:1.15rem; color:var(--accent-ink); margin:0 0 .3rem; }
+  .keyline { border-left:3px solid var(--accent); padding-left:1.1rem; }
+
+  ul.clean { margin:0; padding:0; list-style:none; }
+  ul.clean li { position:relative; padding-left:1.4rem; margin-bottom:.6rem; }
+  ul.clean li::before { content:""; position:absolute; left:.15rem; top:.62em; width:6px; height:6px; border-radius:50%; background:var(--accent); }
+
+  /* ---- chips ---- */
+  .chip {
+    display:inline-flex; align-items:center; gap:.32rem; font-size:.74rem; font-weight:600;
+    letter-spacing:.01em; padding:.18rem .5rem; border-radius:999px; white-space:nowrap;
+    line-height:1.1;
+  }
+  .chip.good { background:var(--good-soft); color:var(--good); }
+  .chip.warn { background:var(--warn-soft); color:var(--warn); }
+  .chip.bad  { background:var(--bad-soft); color:var(--bad); }
+  .chip.neu  { background:var(--panel); color:var(--muted); }
+  .chip .dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
+
+  /* ---- tables ---- */
+  .scroller { overflow-x:auto; border:1px solid var(--border); border-radius:12px; background:var(--paper); box-shadow:var(--shadow); }
+  table { border-collapse:collapse; width:100%; min-width:640px; }
+  th, td { text-align:left; padding:.72rem .9rem; border-bottom:1px solid var(--border); vertical-align:top; }
+  thead th {
+    font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; font-weight:600;
+    color:var(--muted); background:var(--panel); position:sticky; top:0;
+  }
+  tbody tr:last-child td { border-bottom:0; }
+  td.num, th.num { font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; }
+  .rowlab { font-family:"Archivo",sans-serif; font-weight:600; font-size:.92rem; }
+  .rowlab small { display:block; font-family:"IBM Plex Mono",monospace; font-weight:400; font-size:.72rem; color:var(--faint); margin-top:.15rem; letter-spacing:0; }
+  tbody, table { font-size:.94rem; }
+  .matrix td { font-size:.9rem; }
+
+  /* ---- formula / code ---- */
+  .formula {
+    font-family:"IBM Plex Mono",monospace; font-size:.92rem; background:var(--panel);
+    border:1px solid var(--border); border-radius:10px; padding:.85rem 1rem; overflow-x:auto;
+    color:var(--ink); line-height:1.5;
+  }
+  .formula .c { color:var(--muted); }
+  code { background:var(--panel); border:1px solid var(--border); border-radius:5px; padding:.08em .38em; font-size:.86em; }
+
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+  .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; }
+  .tag { display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); border:1px solid var(--border); border-radius:5px; padding:.12rem .4rem; margin-bottom:.7rem; }
+
+  /* verdict header cell mini */
+  .verdict { display:flex; flex-direction:column; gap:.5rem; }
+
+  footer { padding:40px 0 64px; color:var(--muted); font-size:.9rem; }
+  footer .mono { color:var(--faint); }
+
+  .toggle {
+    position:fixed; top:16px; right:16px; z-index:20;
+    font-family:"IBM Plex Mono",monospace; font-size:.72rem;
+    background:var(--paper); color:var(--muted); border:1px solid var(--border);
+    border-radius:999px; padding:.4rem .7rem; cursor:pointer; box-shadow:var(--shadow);
+  }
+  .toggle:hover { color:var(--ink); border-color:var(--border-strong); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+
+  @media (max-width:760px){
+    body { font-size:17px; }
+    .stats { grid-template-columns:1fr; }
+    .stat { border-right:0; border-bottom:1px solid var(--border); }
+    .two,.grid3 { grid-template-columns:1fr; }
+    .hero-inner { padding:40px 0 32px; }
+  }
+  @media (prefers-reduced-motion:reduce){ *{ scroll-behavior:auto; } }
+</style>
+
+<button class="toggle" id="themeToggle" aria-label="Toggle color theme">◐ theme</button>
+
+<header class="hero">
+  <div class="wrap hero-inner">
+    <span class="kicker">Protocol research memo · <b>EELS / EVM</b></span>
+    <h1>What can we do about EVM memory?</h1>
+    <p class="dek">The quadratic memory price is harsh — but the fix must not hand clients unbounded memory, and must not break existing contracts. A look at today's worst case, and at two ways to change the cost model.</p>
+    <div class="meta-row">
+      <span><b>Baseline:</b> EIP-7825 tx gas cap = 2²⁴ = 16,777,216 gas</span>
+      <span><b>Scope:</b> single · total · cumulative memory</span>
+      <span><b>Date:</b> 2026-08-27</span>
+    </div>
+  </div>
+</header>
+
+<div class="statband">
+  <div class="wrap">
+    <div class="stats">
+      <div class="stat">
+        <div class="lab">Single frame — today</div>
+        <div class="stat-num">2.8<span class="u">MiB</span></div>
+        <div class="sub">One <span class="mono">MSTORE</span>; the quadratic term is the wall.</div>
+      </div>
+      <div class="stat">
+        <div class="lab">Total (peak, live at once) — today</div>
+        <div class="stat-num">18.3<span class="u">MiB</span></div>
+        <div class="sub">~148 nested frames escape the quadratic. 6.5× a single frame.</div>
+      </div>
+      <div class="stat">
+        <div class="lab">Cumulative touched — today</div>
+        <div class="stat-num">~126<span class="u">MiB</span></div>
+        <div class="sub">Freed &amp; re-touched via sequential calls; ~8.7 KiB live.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+
+  <!-- EXEC SUMMARY -->
+  <section id="summary">
+    <div class="sechead"><span class="secno">00</span><h2>The short version</h2></div>
+    <div class="prose">
+      <p>Two knobs are being conflated. <strong>Price</strong> (how much gas a byte of memory costs) and the <strong>ceiling</strong> (how much memory can exist at once) are independent, and the cleanest designs set them separately.</p>
+    </div>
+    <div class="rec keyline" style="border-left:0; margin-top:1.2rem">
+      <p class="rec-title">Recommendation</p>
+      <p style="margin-bottom:.6rem">Keep a <strong>cheap, linear price</strong> (kills the harsh quadratic) but bound the <strong>aggregate</strong> the way EIP-7686 does: make each frame <strong>reserve gas equal to the memory it holds</strong> before forwarding to a child. That turns the transaction gas budget into a composable, non-griefable memory ceiling — <span class="mono">N&nbsp;gas ⇒ ≤&nbsp;N&nbsp;bytes</span> — with a tunable multiplier to pin the ceiling at or below today's level. Price and ceiling stay decoupled.</p>
+      <p style="margin:0; color:var(--muted); font-size:.95rem">A bare price cut (EIP-7923 without a working cap) makes a <em>single ordinary transaction</em> allocate <strong>~654 MiB</strong>. A transaction-global cap fixes the size but breaks composability (griefing). A per-frame size cap doesn't bound the aggregate at all.</p>
+    </div>
+  </section>
+
+  <!-- 01 how priced today -->
+  <section id="today">
+    <div class="sechead"><span class="secno">01</span><h2>How EVM memory is priced today</h2></div>
+    <div class="prose">
+      <p>Memory is charged by how far it has been expanded, in 32-byte words, with a linear term and a quadratic term:</p>
+    </div>
+    <div class="formula" style="max-width:60ch">memory_cost(w) = 3·w + w² / 512   <span class="c">// w = 32-byte words</span></div>
+    <div class="prose">
+      <p>The quadratic term is what makes large single-frame memory expensive: at the ceiling the marginal cost is hundreds of gas per word. Under the EIP-7825 transaction gas cap of <span class="mono num">16,777,216</span> gas, that puts a hard, self-imposed wall on how much one frame can allocate — <strong>2.80&nbsp;MiB</strong> — without any explicit memory limit in the protocol. The quadratic <em>is</em> the current limiter.</p>
+    </div>
+  </section>
+
+  <!-- 02 current worst case -->
+  <section id="worstcase">
+    <div class="sechead"><span class="secno">02</span><h2>Today's worst case, measured</h2></div>
+    <div class="prose"><p>Three different quantities matter, and an adversary maximizes each differently. We reproduced all three as fill-able benchmarks.</p></div>
+
+    <div class="grid3" style="margin:1.2rem 0">
+      <div class="box">
+        <span class="tag">Single frame</span>
+        <div class="stat-num" style="font-size:1.9rem">2.80 <span class="u">MiB</span></div>
+        <p style="font-size:.92rem; color:var(--muted); margin:.5rem 0 0">One <span class="mono">MSTORE</span> at offset <span class="mono num">2,939,456</span> (91,859 words). Costs <span class="mono num">16,756,193</span> gas — 14 gas under the cap.</p>
+      </div>
+      <div class="box">
+        <span class="tag">Total — peak live</span>
+        <div class="stat-num" style="font-size:1.9rem">18.3 <span class="u">MiB</span></div>
+        <p style="font-size:.92rem; color:var(--muted); margin:.5rem 0 0">~148 nested self-calls. Each fresh frame resets memory to zero, escaping the quadratic. Bounded by the <strong>63/64</strong> forwarding rule, not the 1024 depth limit.</p>
+      </div>
+      <div class="box">
+        <span class="tag">Cumulative touched</span>
+        <div class="stat-num" style="font-size:1.9rem">~126 <span class="u">MiB</span></div>
+        <p style="font-size:.92rem; color:var(--muted); margin:.5rem 0 0">~14,800 <em>sequential</em> calls that expand then return; unused gas comes back, so 63/64 isn't a loss. Only ~8.7&nbsp;KiB is ever live.</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p><strong>Why "total" ≠ "single".</strong> The quadratic punishes concentration, so an attacker <em>splits</em> the allocation across nested frames — each frame pays the quadratic from a zero base. The gain tops out at ~6.5× because deeper frames get exponentially less gas (each call can forward at most 63/64 of what remains).</p>
+      <p><strong>Why "cumulative" ≠ "total".</strong> Peak live memory is what a client must hold in RAM; cumulative touched is expansion/zeroing <em>work</em>. Freeing and re-touching (sequential calls, gas returned) lets a transaction do far more expansion work than it ever holds at once.</p>
+    </div>
+  </section>
+
+  <!-- 03 the quadratic problem -->
+  <section id="problem">
+    <div class="sechead"><span class="secno">03</span><h2>The case against the quadratic</h2></div>
+    <div class="prose">
+      <p>The quadratic term is a blunt instrument. It makes memory <em>cheap</em> for small buffers and <em>punishingly expensive</em> for large ones — which is good for limiting size, but bad for anyone who legitimately needs a large contiguous buffer (proof verification, large returndata, ZK-friendly execution). It also creates a non-obvious cost cliff and, as shown above, incentivizes the nesting workaround that partially defeats it anyway.</p>
+      <p>EIP-7923 is pointed in the right direction: <strong>drop the quadratic, price memory linearly.</strong> The open question is what then stops a transaction from allocating an unreasonable amount — because a cheap linear price removes the only thing currently bounding memory.</p>
+    </div>
+  </section>
+
+  <!-- 04 EIP-7923 -->
+  <section id="e7923">
+    <div class="sechead"><span class="secno">04</span><h2>Option A — EIP-7923: page-based linear price</h2></div>
+    <div class="prose">
+      <p>Charge a flat <span class="mono num">100</span> gas per <span class="mono num">4096</span>-byte page (page 0 free per frame); both linear and quadratic word terms removed. A transaction-global page counter enforces a <span class="mono">MAXIMUM_MEMORY_SIZE</span> of 64 MiB.</p>
+    </div>
+    <div class="formula" style="max-width:66ch">ALLOCATE_PAGE_COST = 100   PAGE_SIZE = 4096   <span class="c">// ≈ 0.78 gas/word</span>
+MAXIMUM_MEMORY_SIZE = 64 MiB = 16,384 pages   <span class="c">// transaction-global</span></div>
+
+    <h3>Effect on the maximum</h3>
+    <div class="prose">
+      <p>The price is ~4× cheaper than even today's <em>linear</em> floor, and there is no quadratic. That inverts the whole picture:</p>
+    </div>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Strategy</th><th class="num">Today (quadratic)</th><th class="num">EIP-7923, cap OFF</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td class="rowlab">Single frame</td><td class="num">2.8 MiB</td><td class="num">~654 MiB</td><td>Cap-free linear price; one <span class="mono">MSTORE</span>.</td></tr>
+          <tr><td class="rowlab">Total (nested)</td><td class="num">18.3 MiB</td><td class="num">~654 MiB</td><td>Nesting no longer helps — no quadratic to escape, 63/64 becomes pure loss.</td></tr>
+          <tr><td class="rowlab">Cumulative</td><td class="num">126 MiB</td><td class="num">~654 MiB</td><td>Churn no longer helps — call overhead ≥ a page's price.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="prose" style="margin-top:1.1rem">
+      <p>All three collapse to <strong>~654 MiB</strong> = <span class="mono">gas / 100 × 4096</span>. Removing the quadratic removes the very reason the nesting and churn tricks existed, so the <em>naive</em> single-frame path becomes the worst case — and it is 234× larger than today's single frame. This is exactly the DoS vector the 64 MiB cap exists to close.</p>
+    </div>
+
+    <h3>The cap is the hard part</h3>
+    <div class="two" style="margin-top:.6rem">
+      <div class="box">
+        <p style="margin:0 0 .4rem"><span class="chip bad"><span class="dot"></span>Transaction-global cap</span></p>
+        <p style="font-size:.94rem; margin:0; color:var(--muted)">Bounds the total, but the budget is <strong>shared across frames</strong>: a parent that uses most of it leaves a callee unable to allocate — a griefing vector that breaks the EVM's promise that each call has independent memory. Also fails the transaction the instant it's hit.</p>
+      </div>
+      <div class="box">
+        <p style="margin:0 0 .4rem"><span class="chip warn"><span class="dot"></span>Per-frame size cap</span></p>
+        <p style="font-size:.94rem; margin:0; color:var(--muted)">Composable, but <strong>doesn't bound the aggregate</strong>. At 100 gas/page, a 2.8 MiB per-frame cap still yields <strong>275 MiB</strong> via ~99 nested frames. Holding the total at today's ~18 MiB would need a ~56 KiB per-frame cap — far too small for real contracts.</p>
+      </div>
+    </div>
+    <div class="prose" style="margin-top:1.1rem">
+      <p>The scope of the cap isn't the lever — <strong>price is</strong>. The worst-case total is <span class="mono">gas / price-per-byte</span>; 654 MiB happens only because 100 gas/page is ~35× too cheap to let the gas cap bind at today's level. Making gas bind at ~18 MiB via price alone would mean ~3,570 gas/page (~28 gas/word) — which overcharges small, common buffers ~9×. Price alone can't be both cheap-for-small and bounded-for-large.</p>
+    </div>
+  </section>
+
+  <!-- 05 EIP-7686 -->
+  <section id="e7686">
+    <div class="sechead"><span class="secno">05</span><h2>Option B — EIP-7686: linear price + memory-aware forwarding</h2></div>
+    <div class="prose">
+      <p>EIP-7686 keeps a linear price but adds the missing piece: it bounds the aggregate through a <strong>gas reservation in the call-forwarding rule</strong>, not through a price or a counter.</p>
+    </div>
+    <div class="formula" style="max-width:70ch">memory_cost(w) = 3·w                              <span class="c">// linear; quadratic removed</span>
+max_call_gas(gas, mem_bytes) = gas − max(gas/64, mem_bytes)   <span class="c">// forwarding</span>
+<span class="c">// + a per-call cap: memory may not exceed the call's initial gas</span></div>
+
+    <h3>Why this is the elegant bound</h3>
+    <div class="prose">
+      <p>Before forwarding to a child, a frame must <strong>reserve gas equal to the bytes it currently holds</strong>. So every ancestor of the deepest frame has locked away gas equal to its own live memory, and:</p>
+    </div>
+    <div class="box keyline" style="margin:1rem 0; font-family:'IBM Plex Mono',monospace; font-size:.9rem; background:var(--accent-soft); border-color:transparent">
+      Σ(all live memory) ≤ (gas reserved by ancestors) + (deepest frame ≤ its gas) ≤ total gas
+    </div>
+    <div class="prose">
+      <p>That is a <strong>transaction-wide invariant — <span class="mono">N gas ⇒ ≤ N bytes</span> — produced by a purely per-frame rule.</strong> No global counter, so no griefing: a callee's memory limit is simply its own forwarded gas, exactly like gas itself. It also generalizes the 63/64 rule — small memory falls back to plain 63/64; large memory reserves the bytes.</p>
+      <p>And it stays cheap: the bound comes from <em>reserving</em> gas 1:1 with bytes, not <em>paying</em> it. Filling the entire ceiling costs only ~1.57M gas (~9% of the budget) — the rest is merely held back.</p>
+    </div>
+
+    <div class="grid3" style="margin:1.3rem 0 .4rem">
+      <div class="box">
+        <span class="tag">Ceiling @ 2²⁴ gas</span>
+        <div class="stat-num" style="font-size:1.9rem">16.0 <span class="u">MiB</span></div>
+        <p style="font-size:.9rem;color:var(--muted);margin:.5rem 0 0">Single / total / cumulative all top out here. <strong>Below today's 18.3 MiB.</strong></p>
+      </div>
+      <div class="box">
+        <span class="tag">Composable</span>
+        <div class="stat-num" style="font-size:1.9rem"><span class="chip good" style="font-size:.9rem"><span class="dot"></span>Yes</span></div>
+        <p style="font-size:.9rem;color:var(--muted);margin:.7rem 0 0">Per-frame rule, no shared counter, no new griefing vector.</p>
+      </div>
+      <div class="box">
+        <span class="tag">Tunable ceiling</span>
+        <div class="stat-num" style="font-size:1.9rem">N / k</div>
+        <p style="font-size:.9rem;color:var(--muted);margin:.5rem 0 0">Reserve <em>k</em> gas per byte. <span class="mono">k=1 → 16 MiB</span>; <span class="mono">k=6 → 2.7 MiB</span> (≈ today's single frame).</p>
+      </div>
+    </div>
+    <div class="prose">
+      <p>This is the decoupling we were missing: the <strong>reservation multiplier sets the ceiling independently of the price</strong>. Keep memory cheap and linear, and pick <em>k</em> for whatever aggregate ceiling policy wants.</p>
+    </div>
+  </section>
+
+  <!-- 06 comparison matrix -->
+  <section id="matrix">
+    <div class="sechead"><span class="secno">06</span><h2>Side by side</h2></div>
+    <div class="scroller">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th class="num">Single</th>
+            <th class="num">Total (live)</th>
+            <th class="num">Cumulative</th>
+            <th>Composable</th>
+            <th>Bounds aggregate</th>
+            <th>Breaks contracts</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="rowlab">Today <small>quadratic</small></td>
+            <td class="num">2.8 MiB</td><td class="num">18.3 MiB</td><td class="num">126 MiB</td>
+            <td><span class="chip good"><span class="dot"></span>Yes</span></td>
+            <td><span class="chip good"><span class="dot"></span>Yes (by price)</span></td>
+            <td><span class="chip neu">baseline</span></td>
+          </tr>
+          <tr>
+            <td class="rowlab">EIP-7923 <small>no cap</small></td>
+            <td class="num">~654 MiB</td><td class="num">~654 MiB</td><td class="num">~654 MiB</td>
+            <td><span class="chip good"><span class="dot"></span>Yes</span></td>
+            <td><span class="chip bad"><span class="dot"></span>No</span></td>
+            <td><span class="chip warn"><span class="dot"></span>DoS risk</span></td>
+          </tr>
+          <tr>
+            <td class="rowlab">EIP-7923 <small>+ global cap</small></td>
+            <td class="num">≤64 MiB</td><td class="num">≤64 MiB</td><td class="num">≤64 MiB</td>
+            <td><span class="chip bad"><span class="dot"></span>No (grief)</span></td>
+            <td><span class="chip good"><span class="dot"></span>Yes</span></td>
+            <td><span class="chip bad"><span class="dot"></span>New OOM/grief</span></td>
+          </tr>
+          <tr>
+            <td class="rowlab">EIP-7923 <small>+ per-frame cap 2.8 MiB</small></td>
+            <td class="num">2.8 MiB</td><td class="num">275 MiB</td><td class="num">~654 MiB</td>
+            <td><span class="chip good"><span class="dot"></span>Yes</span></td>
+            <td><span class="chip bad"><span class="dot"></span>No</span></td>
+            <td><span class="chip warn"><span class="dot"></span>DoS risk</span></td>
+          </tr>
+          <tr>
+            <td class="rowlab">EIP-7686 <small>k=1</small></td>
+            <td class="num">16.0 MiB</td><td class="num">16.0 MiB</td><td class="num">16.0 MiB</td>
+            <td><span class="chip good"><span class="dot"></span>Yes</span></td>
+            <td><span class="chip good"><span class="dot"></span>Yes (invariant)</span></td>
+            <td><span class="chip warn"><span class="dot"></span>Gas-to-child</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.82rem;color:var(--faint);margin-top:.8rem" class="mono">All figures under the EIP-7825 2²⁴ gas cap. Single-frame values are exact; nested/cumulative depend on modest per-frame overhead assumptions (~130–200 gas/frame).</p>
+  </section>
+
+  <!-- 07 breakage -->
+  <section id="breakage">
+    <div class="sechead"><span class="secno">07</span><h2>What breaks — compatibility</h2></div>
+    <div class="two">
+      <div class="box">
+        <p style="margin:0 0 .5rem"><span class="chip warn"><span class="dot"></span>EIP-7923 · price</span></p>
+        <p style="margin:0 0 .7rem; font-size:.95rem">Making memory <em>cheaper</em> breaks nothing by cost — existing code only ever pays less. The risk is entirely in the <strong>cap</strong>:</p>
+        <ul class="clean" style="font-size:.92rem">
+          <li>A 64 MiB cap breaks no contract today (max is 18.3 MiB) but permits ~3.5× today's client RAM.</li>
+          <li>Any cap below ~18 MiB can break existing nested-memory patterns.</li>
+          <li>A global cap introduces a <strong>new failure mode</strong>: a callee OOMs based on caller behaviour (griefing) — not observable in any pre-fork trace.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <p style="margin:0 0 .5rem"><span class="chip warn"><span class="dot"></span>EIP-7686 · forwarding</span></p>
+        <p style="margin:0 0 .7rem; font-size:.95rem">The reservation changes an observable quantity: <strong>gas forwardable to a child drops when the parent holds memory.</strong></p>
+        <ul class="clean" style="font-size:.92rem">
+          <li>A contract that builds a large buffer (e.g. copies big calldata/returndata) then calls out will forward <span class="mono">gas − mem_bytes</span> instead of <span class="mono">63/64·gas</span> — the child can OOG where it previously succeeded.</li>
+          <li>The per-call cap (memory ≤ initial gas) is generous at k=1 and rarely binds; it tightens as k grows.</li>
+          <li><strong>Action:</strong> measure how many mainnet call sites forward near-all gas while holding &gt; a few KiB of memory — that set is the blast radius.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 08 recommendation -->
+  <section id="recommendation">
+    <div class="sechead"><span class="secno">08</span><h2>Recommendation</h2></div>
+    <div class="prose">
+      <p>You cannot have all three of {cheap small usage, linear/predictable, bounded aggregate} from a <em>price</em> alone — pick the design that adds a separate bound. The reservation model does this best.</p>
+    </div>
+    <div class="rec" style="margin-top:1rem">
+      <p class="rec-title">Adopt EIP-7686's reservation model; tune the ceiling with <span class="mono">k</span></p>
+      <ul class="clean">
+        <li><strong>Price:</strong> linear (drop the quadratic) — cheap, predictable, ZK-friendly. This is the EIP-7923 direction, kept.</li>
+        <li><strong>Ceiling:</strong> reserve <span class="mono">k</span> gas per live byte on forward (<span class="mono">max(gas/64, k·mem_bytes)</span>). Gas becomes a composable, forwarded, non-griefable memory budget. No global counter, no new OOM-by-caller.</li>
+        <li><strong>Pick <span class="mono">k</span> for policy:</strong> <span class="mono">k=1</span> → 16 MiB (below today, more usable per-frame memory); <span class="mono">k≈6</span> → ~2.7 MiB (pins the ceiling at today's single-frame limit).</li>
+        <li><strong>Before shipping:</strong> quantify the gas-to-child blast radius on mainnet; that is the one real backward-compat risk, and it is measurable.</li>
+      </ul>
+    </div>
+    <div class="prose" style="margin-top:1.3rem">
+      <h3 style="margin-top:0">Open questions for the report to resolve</h3>
+      <ul class="clean">
+        <li>Target ceiling: match today's peak (~18 MiB), today's single frame (~2.8 MiB), or a deliberate new number?</li>
+        <li>Is the ~9× cost increase for small buffers (if a pure-price approach were chosen instead) acceptable, or is the reservation approach clearly preferred?</li>
+        <li>Blast-radius measurement: mainnet call sites forwarding &gt;63/64-equivalent gas while holding meaningful memory.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="reproduce" style="border-bottom:0">
+    <div class="sechead"><span class="secno">09</span><h2>Reproduce every number</h2></div>
+    <div class="prose">
+      <p>None of these figures is an unverifiable estimate. Everything lives on branch <span class="mono">evm-memory-limit-tests</span> of execution-specs, split into two classes of evidence: today's maxima are <strong>filled by the reference EVM</strong>; the EIP-7923 / EIP-7686 projections are <strong>analytical</strong> (those EIPs aren't implemented), derived from their published formulas and <em>calibrated against the fills</em> — the same model predicts the fill-verified current-rules numbers before extending to the new pricing.</p>
+    </div>
+    <div class="two" style="margin-top:.4rem">
+      <div class="box">
+        <p style="margin:0 0 .5rem"><span class="chip good"><span class="dot"></span>Fill-verified</span> &nbsp;current-rules maxima</p>
+        <div class="formula">uv run fill tests/benchmark/compute/\
+scenario/test_max_memory_allocation.py \
+  --fork Osaka --gas-benchmark-values 16</div>
+        <p style="font-size:.9rem;color:var(--muted);margin:.7rem 0 0">Three benchmarks — <span class="mono">single_frame</span> / <span class="mono">nested_frame</span> / <span class="mono">cumulative</span> memory expansion — executed by the in-repo EELS EVM.</p>
+      </div>
+      <div class="box">
+        <p style="margin:0 0 .5rem"><span class="chip warn"><span class="dot"></span>Analytical</span> &nbsp;EIP-7923 / EIP-7686</p>
+        <div class="formula">python3 evm-memory-analysis/reproduce.py</div>
+        <p style="font-size:.9rem;color:var(--muted);margin:.7rem 0 0">Bare Python, no deps. Prints every figure beside its report value, plus the matrix in §06. Formulas in <span class="mono">models.py</span>; figure-to-command map in <span class="mono">README.md</span>.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p><span class="mono">Appendix.</span> Constants: EIP-7825 tx gas cap = 2²⁴; today <span class="mono">3w + w²/512</span>; EIP-7923 <span class="mono">100 gas / 4096 B</span> (page 0 free/frame), cap 64 MiB; EIP-7686 <span class="mono">3w</span> + forwarding <span class="mono">gas − max(gas/64, mem_bytes)</span>. Single-frame figures are exact; nested/cumulative use ~150–200 gas/frame overhead estimates and are robust to ±0.5% variation. Evidence &amp; scripts: branch <span class="mono">evm-memory-limit-tests</span>, dir <span class="mono">evm-memory-analysis/</span>.</p>
+  </footer>
+</main>
+
+<script>
+  (function(){
+    var root=document.documentElement, btn=document.getElementById('themeToggle');
+    function cur(){ return root.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'); }
+    try { var s=localStorage.getItem('evmmem-theme'); if(s) root.setAttribute('data-theme',s); } catch(e){}
+    btn.addEventListener('click',function(){
+      var next = cur()==='dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme',next);
+      try { localStorage.setItem('evmmem-theme',next); } catch(e){}
+    });
+  })();
+</script>
