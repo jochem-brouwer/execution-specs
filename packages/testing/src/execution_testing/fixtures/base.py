@@ -5,10 +5,12 @@ import json
 from enum import Enum, auto
 from functools import cached_property
 from typing import (
+    IO,
     Annotated,
     Any,
     ClassVar,
     Dict,
+    Iterator,
     List,
     Protocol,
     Set,
@@ -22,6 +24,7 @@ from pydantic import (
     Field,
     PlainSerializer,
     PlainValidator,
+    PrivateAttr,
     Tag,
     TypeAdapter,
     model_validator,
@@ -30,6 +33,7 @@ from pydantic_core.core_schema import ValidatorFunctionWrapHandler
 
 from execution_testing.base_types import CamelModel, ReferenceSpec
 from execution_testing.fixtures.post_verifications import PostVerifications
+from execution_testing.fixtures.spill import PayloadBuffer
 from execution_testing.forks import Fork, TransitionFork
 
 
@@ -68,6 +72,8 @@ class FixtureFillingPhase(Enum):
 
 class BaseFixture(CamelModel):
     """Represents a base Ethereum test fixture of any type."""
+
+    _spilled: Dict[str, PayloadBuffer] = PrivateAttr(default_factory=dict)
 
     # Base Fixture class properties
     formats: ClassVar[Dict[str, Type["BaseFixture"]]] = {}
@@ -144,14 +150,97 @@ class BaseFixture(CamelModel):
             mode="json", by_alias=True, exclude_none=True, exclude={"info"}
         )
 
+    def spill_field(self, alias: str, payloads: PayloadBuffer) -> None:
+        """
+        Serve `alias` from a disk-backed list instead of the model field.
+
+        The field itself stays empty, so `json_dict` never holds the
+        payloads and neither does the `model_dump` copy it makes. The
+        document writer and the hash splice the spilled text back in at
+        the right place.
+        """
+        self._spilled[alias] = payloads
+
+    def _canonical_chunks(self) -> Iterator[str]:
+        """
+        Yield the fixture as canonical JSON, one chunk at a time.
+
+        Reproduces `json.dumps(doc, sort_keys=True, separators=(",", ":"))`
+        exactly: keys ascend, and a spilled array is spliced from text that
+        was written in that same canonical form. Never holds more than one
+        payload.
+        """
+        doc = self.json_dict
+        yield "{"
+        for i, key in enumerate(sorted(doc)):
+            if i:
+                yield ","
+            yield json.dumps(key, sort_keys=True, separators=(",", ":"))
+            yield ":"
+            spilled = self._spilled.get(key)
+            if spilled is None:
+                yield json.dumps(
+                    doc[key], sort_keys=True, separators=(",", ":")
+                )
+                continue
+            yield "["
+            for j, canonical in enumerate(spilled.iter_canonical()):
+                if j:
+                    yield ","
+                yield canonical
+            yield "]"
+        yield "}"
+
     @cached_property
     def hash(self) -> str:
-        """Returns the hash of the fixture."""
-        json_str = json.dumps(
-            self.json_dict, sort_keys=True, separators=(",", ":")
-        )
-        h = hashlib.sha256(json_str.encode("utf-8")).hexdigest()
-        return f"0x{h}"
+        """
+        Returns the hash of the fixture.
+
+        Feeds chunks straight into the digest rather than building the
+        document first. `json.dumps` would materialise the whole fixture as
+        one string and then again as UTF-8 bytes, on top of the `json_dict`
+        copy it is already holding -- three full-size copies at once.
+        Benchmark stateful fixtures reach many GB, where that alone
+        exhausts the host. The chunk stream is byte-for-byte what
+        `json.dumps` would have produced, so the digest is unchanged.
+        """
+        h = hashlib.sha256()
+        for chunk in self._canonical_chunks():
+            h.update(chunk.encode("utf-8"))
+        return f"0x{h.hexdigest()}"
+
+    def write_json(self, f: IO[str], hash_only: bool = False) -> None:
+        """
+        Write the fixture document to `f`.
+
+        Streams a spilled array element by element so the payloads are
+        never all in memory at once. Without one this is the same document
+        `json.dump(..., indent=4)` writes.
+        """
+        doc = self.json_dict_with_info(hash_only=hash_only)
+        if not self._spilled:
+            json.dump(doc, f, indent=4)
+            return
+        f.write("{\n")
+        last = len(doc) - 1
+        for i, (key, value) in enumerate(doc.items()):
+            f.write(f"    {json.dumps(key)}: ")
+            spilled = self._spilled.get(key)
+            if spilled is None:
+                text = json.dumps(value, indent=4)
+                f.write(text.replace("\n", "\n    "))
+            elif not spilled:
+                f.write("[]")
+            else:
+                f.write("[\n")
+                for j, payload in enumerate(spilled):
+                    if j:
+                        f.write(",\n")
+                    text = json.dumps(payload, indent=4)
+                    f.write("        " + text.replace("\n", "\n        "))
+                f.write("\n    ]")
+            f.write(",\n" if i < last else "\n")
+        f.write("}")
 
     def json_dict_with_info(self, hash_only: bool = False) -> Dict[str, Any]:
         """Return JSON representation of the fixture with the info field."""
