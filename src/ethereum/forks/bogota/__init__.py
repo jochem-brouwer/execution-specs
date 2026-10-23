@@ -5,11 +5,12 @@ own branches and land here once accepted.
 
 ### Changes
 
-None yet.
+- [EIP-8253: Bump nonce of zero-nonce storage accounts][EIP-8253]
 
 ### Releases
 
 [EIP-8081]: https://eips.ethereum.org/EIPS/eip-8081
+[EIP-8253]: https://eips.ethereum.org/EIPS/eip-8253
 """
 
 from ethereum.fork_criteria import ForkCriteria, Unscheduled

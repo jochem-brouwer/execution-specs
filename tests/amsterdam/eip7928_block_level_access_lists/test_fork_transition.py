@@ -232,13 +232,7 @@ def test_fork_transition_bal_size_constraint(
       `BLOCK_ACCESS_LIST_GAS_LIMIT_EXCEEDED`.
     """
     amsterdam = fork.transitions_to()
-    # The activation block's BAL also carries one nonce change per account
-    # bumped by EIP-8253, on top of the system contract items.
-    min_gas_limit = (
-        amsterdam.minimum_block_gas_limit()
-        + len(amsterdam.zero_nonce_storage_accounts())
-        * amsterdam.gas_costs().BLOCK_ACCESS_LIST_ITEM
-    )
+    min_gas_limit = amsterdam.minimum_block_gas_limit()
     over_budget_gas_limit = min_gas_limit - 1
 
     pre_fork_block = Block(

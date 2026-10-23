@@ -1,6 +1,6 @@
 # EIP-8253 Bump Nonce of Zero-Nonce Storage Accounts Test Cases
 
-All tests are fork-transition tests: the bump happens once, at the Amsterdam fork block. The tests use the Mainnet address list with synthetic pre-states; unless stated otherwise a targeted account is given empty code, zero nonce, and non-empty storage. `[0,1]` denotes the nonce change at block access index zero with post-nonce one.
+All tests are fork-transition tests: the bump happens once, at the Bogota fork block. The tests list the Mainnet addresses in the chain configuration and use synthetic pre-states; unless stated otherwise a targeted account is given empty code, zero nonce, and non-empty storage. `[0,1]` denotes the nonce change at block access index zero with post-nonce one.
 
 | Function Name | Goal | Setup | Expectation | Status |
 |---------------|------|-------|-------------|--------|

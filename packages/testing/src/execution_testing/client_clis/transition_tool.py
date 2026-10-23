@@ -10,7 +10,7 @@ import tempfile
 import textwrap
 import time
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     Any,
@@ -31,7 +31,7 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import ReadTimeout
 from requests_unixsocket import Session
 
-from execution_testing.base_types import BlobSchedule
+from execution_testing.base_types import Address, BlobSchedule
 from execution_testing.base_types.composite_types import (
     ForkBlobSchedule,
 )
@@ -330,6 +330,9 @@ class TransitionTool(EthereumCLI):
         reward: int
         blob_schedule: BlobSchedule | None
         state_test: bool = False
+        zero_nonce_storage_accounts: List[Address] = field(
+            default_factory=list
+        )
 
         @property
         def active_fork(self) -> Fork:

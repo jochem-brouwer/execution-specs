@@ -40,6 +40,7 @@ from .helpers import (
     BALANCE_BASE,
     BUMP_EXPECTATION,
     FORK_TIMESTAMP,
+    ZERO_NONCE_STORAGE_ACCOUNTS,
     bump_expectation,
     place_targeted_account,
 )
@@ -49,7 +50,7 @@ REFERENCE_SPEC_GIT_PATH = ref_spec_8253.git_path
 REFERENCE_SPEC_VERSION = ref_spec_8253.version
 
 pytestmark = [
-    pytest.mark.valid_at_transition_to("Amsterdam"),
+    pytest.mark.valid_at_transition_to("Bogota"),
     pytest.mark.pre_alloc_mutable,
     pytest.mark.exception_test,
 ]
@@ -126,6 +127,7 @@ def fork_block_with_invalid_bal(
         else Transaction(sender=sender, to=receiver, value=1)
     )
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(

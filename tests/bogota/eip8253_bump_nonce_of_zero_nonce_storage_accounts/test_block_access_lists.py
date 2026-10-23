@@ -39,6 +39,7 @@ from .helpers import (
     BALANCE_BASE,
     BUMP_EXPECTATION,
     FORK_TIMESTAMP,
+    ZERO_NONCE_STORAGE_ACCOUNTS,
     bump_expectation,
     bumped_account,
     place_targeted_account,
@@ -49,7 +50,7 @@ REFERENCE_SPEC_GIT_PATH = ref_spec_8253.git_path
 REFERENCE_SPEC_VERSION = ref_spec_8253.version
 
 pytestmark = [
-    pytest.mark.valid_at_transition_to("Amsterdam"),
+    pytest.mark.valid_at_transition_to("Bogota"),
     pytest.mark.pre_alloc_mutable,
 ]
 
@@ -107,6 +108,7 @@ def test_bal_bump_and_read_only_access(
     sender = pre.fund_eoa()
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -149,6 +151,7 @@ def test_bal_bump_and_transaction_to_targeted_account(
     )
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -204,6 +207,7 @@ def test_bal_bump_and_reverted_transfer(
     account_expectations[reverter] = BalAccountExpectation.empty()
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -228,7 +232,7 @@ def test_bal_bump_and_oog_before_target_access(
     records nothing for it, yet the account is present in the fork block
     BAL because of the bump.
     """
-    amsterdam = fork.transitions_to()
+    bogota = fork.transitions_to()
     address = place_targeted_account(pre, TARGET)
     sender = pre.fund_eoa()
 
@@ -245,9 +249,10 @@ def test_bal_bump_and_oog_before_target_access(
         account_new=False,
     )
     caller = pre.deploy_contract(call)
-    intrinsic_gas = amsterdam.transaction_intrinsic_cost_calculator()()
+    intrinsic_gas = bogota.transaction_intrinsic_cost_calculator()()
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -256,7 +261,7 @@ def test_bal_bump_and_oog_before_target_access(
                     Transaction(
                         sender=sender,
                         to=caller,
-                        gas_limit=intrinsic_gas + call.gas_cost(amsterdam) - 1,
+                        gas_limit=intrinsic_gas + call.gas_cost(bogota) - 1,
                     )
                 ],
                 expected_block_access_list=BlockAccessListExpectation(
@@ -298,6 +303,7 @@ def test_bal_bump_and_access_list_entry(
     )
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -344,6 +350,7 @@ def test_bal_bump_and_selfdestruct_beneficiary(
         victim_expectation = BalAccountExpectation.empty()
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -380,7 +387,7 @@ def test_bal_bump_of_fee_recipient(
     recipient otherwise is not; fees add a balance change at the
     transaction's index.
     """
-    amsterdam = fork.transitions_to()
+    bogota = fork.transitions_to()
     address = place_targeted_account(pre, TARGET)
     genesis = Environment(base_fee_per_gas=GENESIS_BASE_FEE)
     base_fee = fork_block_base_fee(fork, genesis)
@@ -393,7 +400,7 @@ def test_bal_bump_of_fee_recipient(
         receiver = pre.fund_eoa(amount=1)
         # No execution and no state growth, so the gas used is exactly the
         # intrinsic cost.
-        gas_used = amsterdam.transaction_intrinsic_cost_calculator()()
+        gas_used = bogota.transaction_intrinsic_cost_calculator()()
         txs = [
             Transaction(
                 sender=sender,
@@ -410,6 +417,7 @@ def test_bal_bump_of_fee_recipient(
     )
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -439,7 +447,7 @@ def test_bal_bump_of_recipient_and_fee_recipient_in_one_transaction(
     fee gets one balance change at that index holding the combined result,
     next to the nonce change at index zero.
     """
-    amsterdam = fork.transitions_to()
+    bogota = fork.transitions_to()
     address = place_targeted_account(pre, TARGET)
     genesis = Environment(base_fee_per_gas=GENESIS_BASE_FEE)
     base_fee = fork_block_base_fee(fork, genesis)
@@ -447,7 +455,7 @@ def test_bal_bump_of_recipient_and_fee_recipient_in_one_transaction(
     value = 5
     priority_fee = 1
 
-    gas_used = amsterdam.transaction_intrinsic_cost_calculator()(
+    gas_used = bogota.transaction_intrinsic_cost_calculator()(
         sends_value=True, recipient_type=RecipientType.EOA
     )
     tx = Transaction(
@@ -460,6 +468,7 @@ def test_bal_bump_of_recipient_and_fee_recipient_in_one_transaction(
     balance = BALANCE_BASE + value + priority_fee * gas_used
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -530,6 +539,7 @@ def test_bal_bump_and_withdrawals(
         )
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -573,12 +583,12 @@ def test_bal_bump_size_limit_counts_targeted_address_once(
     already counted for the bump, while a withdrawal to any other account
     adds an item and exceeds the budget.
     """
-    amsterdam = fork.transitions_to()
+    bogota = fork.transitions_to()
     address = place_targeted_account(pre, TARGET)
     min_gas_limit = (
-        amsterdam.minimum_block_gas_limit()
-        + len(amsterdam.zero_nonce_storage_accounts())
-        * amsterdam.gas_costs().BLOCK_ACCESS_LIST_ITEM
+        bogota.minimum_block_gas_limit()
+        + len(ZERO_NONCE_STORAGE_ACCOUNTS)
+        * bogota.gas_costs().BLOCK_ACCESS_LIST_ITEM
     )
     amount = 10
 
@@ -592,6 +602,7 @@ def test_bal_bump_size_limit_counts_targeted_address_once(
         post = {}
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -627,6 +638,7 @@ def test_bal_access_to_bumped_account_after_fork_block(
     sender = pre.fund_eoa()
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(

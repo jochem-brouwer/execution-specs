@@ -18,6 +18,7 @@ from execution_testing.forks.base_fork import BaseFork
 from ethereum.crypto.hash import keccak256
 from ethereum.exceptions import EthereumException, StateWithEmptyAccount
 from ethereum.fork_criteria import ByBlockNumber, ByTimestamp, ForkCriteria
+from ethereum.state import Address
 from ethereum.state_mpt import close_state
 from ethereum.utils.hexadecimal import hex_to_bytes
 from ethereum_spec_tools.loaders.fixture_loader import Load
@@ -258,6 +259,19 @@ class BlockchainTestFixture(Fixture, FixtureTestItem):
             state=state,
             chain_id=U64(json_data["genesisBlockHeader"].get("chainId", 1)),
         )
+        zero_nonce_storage_accounts = tuple(
+            Address(hex_to_bytes(address))
+            for address in json_data.get("config", {}).get(
+                "zeroNonceStorageAccounts", []
+            )
+        )
+
+        def configure_chain(chain: Any) -> Any:
+            if hasattr(chain, "zero_nonce_storage_accounts"):
+                chain.zero_nonce_storage_accounts = zero_nonce_storage_accounts
+            return chain
+
+        chain = configure_chain(chain)
 
         def mock_pow(fork_load: Load) -> bool:
             return (
@@ -283,7 +297,7 @@ class BlockchainTestFixture(Fixture, FixtureTestItem):
                     and current is not load
                     and self.transition.activates(json_block)
                 ):
-                    chain = load.fork.apply_fork(chain)
+                    chain = configure_chain(load.fork.apply_fork(chain))
                     current = load
 
                 block_exception = None

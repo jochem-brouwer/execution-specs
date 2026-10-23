@@ -16,6 +16,14 @@ from .spec import Spec, TargetedAccount
 
 FORK_TIMESTAMP = 15_000
 
+ZERO_NONCE_STORAGE_ACCOUNTS: List[Address] = [
+    Address(target.address) for target in Spec.TARGETED_ACCOUNTS
+]
+"""
+The accounts the test chain configuration lists for the bump: the addresses
+of the Mainnet targets, placed in the pre-state with their Mainnet shape.
+"""
+
 BALANCE_BASE = 10**15
 """
 Balance given to a targeted account in the pre-state. Distinct per account
