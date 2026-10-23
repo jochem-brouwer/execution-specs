@@ -1,9 +1,10 @@
 """
 Tests for [EIP-8253: Bump nonce of zero-nonce storage accounts](https://eips.ethereum.org/EIPS/eip-8253).
 
-The bump happens once, at the Amsterdam fork block. These transition tests
-use the Mainnet address list with synthetic prestates, including listed
-accounts with empty storage and accounts absent from the prestate.
+The bump happens once, at the Bogota fork block. These transition tests
+list the Mainnet addresses in the chain configuration and use synthetic
+prestates, including listed accounts with empty storage and accounts absent
+from the prestate.
 """
 
 from typing import Tuple
@@ -35,9 +36,11 @@ from .helpers import (
     BALANCE_BASE,
     BUMP_EXPECTATION,
     FORK_TIMESTAMP,
+    ZERO_NONCE_STORAGE_ACCOUNTS,
     bumped_account,
     place_targeted_account,
     place_targeted_accounts,
+    targeted_storage,
 )
 from .spec import Spec, TargetedAccount, ref_spec_8253
 
@@ -45,7 +48,7 @@ REFERENCE_SPEC_GIT_PATH = ref_spec_8253.git_path
 REFERENCE_SPEC_VERSION = ref_spec_8253.version
 
 pytestmark = [
-    pytest.mark.valid_at_transition_to("Amsterdam"),
+    pytest.mark.valid_at_transition_to("Bogota"),
     pytest.mark.pre_alloc_mutable,
 ]
 
@@ -148,6 +151,7 @@ def test_nonce_bump_at_fork_block(
     ]
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=blocks,
         post={**post, receiver: Account(balance=2)},
@@ -206,6 +210,7 @@ def test_create_collision_at_fork_block(
     ]
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=blocks,
         post={
@@ -269,6 +274,7 @@ def test_create_collision_after_fork_block(
     ]
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=blocks,
         post={
@@ -298,7 +304,7 @@ def test_create_early_failure_at_fork_block(
     address is accessed leaves the target with only the bump in the fork
     block BAL. The creator does not increment its nonce.
     """
-    amsterdam = fork.transitions_to()
+    bogota = fork.transitions_to()
     target = Spec.TARGETED_ACCOUNTS[0]
     address = place_targeted_account(pre, target)
     sender = pre.fund_eoa()
@@ -355,18 +361,19 @@ def test_create_early_failure_at_fork_block(
             new_memory_size=32,
             account_new=False,
         )
-        intrinsic_gas = amsterdam.transaction_intrinsic_cost_calculator()()
+        intrinsic_gas = bogota.transaction_intrinsic_cost_calculator()()
         tx = Transaction(
             sender=sender,
             to=creator,
             gas_limit=intrinsic_gas
-            + before_target_access.gas_cost(amsterdam)
+            + before_target_access.gas_cost(bogota)
             - 1,
         )
     else:
         raise ValueError(f"Unhandled failure: {failure}")
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -452,6 +459,7 @@ def test_call_to_bumped_account(
     ]
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=blocks,
         post={
@@ -489,6 +497,7 @@ def test_non_targeted_accounts_unaffected(
     untouched = [lookalike, contract, used_eoa, fresh_eoa]
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -543,6 +552,7 @@ def test_targeted_accounts_without_storage(
             pre.deploy_contract(b"", address=address, nonce=0, balance=balance)
 
     blockchain_test(
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
         pre=pre,
         blocks=[
             Block(
@@ -566,6 +576,101 @@ def test_targeted_accounts_without_storage(
                 )
                 for address in targeted
             },
+            receiver: Account(balance=2),
+        },
+    )
+
+
+def test_empty_list_leaves_fork_block_untouched(
+    blockchain_test: BlockchainTestFiller,
+    pre: Alloc,
+) -> None:
+    """
+    A chain that lists no accounts, the default, changes nothing at the fork
+    block, even when accounts of the targeted shape are in the state.
+    """
+    place_targeted_accounts(pre)
+    targeted = list(ZERO_NONCE_STORAGE_ACCOUNTS)
+    sender = pre.fund_eoa()
+    receiver = pre.fund_eoa(amount=0)
+
+    blockchain_test(
+        pre=pre,
+        blocks=[
+            Block(
+                timestamp=FORK_TIMESTAMP - 1,
+                txs=[Transaction(sender=sender, to=receiver, value=1)],
+            ),
+            Block(
+                timestamp=FORK_TIMESTAMP,
+                txs=[Transaction(sender=sender, to=receiver, value=1)],
+                expected_block_access_list=BlockAccessListExpectation(
+                    account_expectations=dict.fromkeys(targeted)
+                ),
+            ),
+        ],
+        post={
+            **{
+                Address(target.address): Account(
+                    nonce=0,
+                    balance=BALANCE_BASE + index,
+                    code=b"",
+                    storage=targeted_storage(target),
+                )
+                for index, target in enumerate(Spec.TARGETED_ACCOUNTS)
+            },
+            receiver: Account(balance=2),
+        },
+    )
+
+
+def test_bump_follows_chain_list(
+    blockchain_test: BlockchainTestFiller,
+    pre: Alloc,
+) -> None:
+    """
+    Bump only the accounts the chain configuration lists. Mainnet targets
+    left off a chain's list keep their zero nonce.
+    """
+    mainnet_target = place_targeted_account(pre, Spec.TARGETED_ACCOUNTS[0])
+    listed = []
+    for _ in range(2):
+        address = pre.fund_eoa(amount=0)
+        pre[address] = Account(nonce=0, balance=1, code=b"", storage={0: 1})
+        listed.append(address)
+    sender = pre.fund_eoa()
+    receiver = pre.fund_eoa(amount=0)
+
+    blockchain_test(
+        zero_nonce_storage_accounts=listed,
+        pre=pre,
+        blocks=[
+            Block(
+                timestamp=FORK_TIMESTAMP - 1,
+                txs=[Transaction(sender=sender, to=receiver, value=1)],
+            ),
+            Block(
+                timestamp=FORK_TIMESTAMP,
+                txs=[Transaction(sender=sender, to=receiver, value=1)],
+                expected_block_access_list=BlockAccessListExpectation(
+                    account_expectations={
+                        **dict.fromkeys(listed, BUMP_EXPECTATION),
+                        mainnet_target: None,
+                    }
+                ),
+            ),
+        ],
+        post={
+            **{
+                address: Account(nonce=1, balance=1, code=b"", storage={0: 1})
+                for address in listed
+            },
+            mainnet_target: Account(
+                nonce=0,
+                balance=BALANCE_BASE,
+                code=b"",
+                storage=targeted_storage(Spec.TARGETED_ACCOUNTS[0]),
+            ),
             receiver: Account(balance=2),
         },
     )

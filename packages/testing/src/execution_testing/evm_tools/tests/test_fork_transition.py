@@ -7,7 +7,7 @@ from typing import Literal
 
 import pytest
 
-from execution_testing import Alloc, Environment, Hash
+from execution_testing import Address, Alloc, Environment, Hash
 from execution_testing.client_clis.transition_tool import TransitionTool
 from execution_testing.evm_tools.t8n import T8N, ForkCache
 from execution_testing.evm_tools.t8n.cli import (
@@ -15,14 +15,16 @@ from execution_testing.evm_tools.t8n.cli import (
     t8n_arguments,
 )
 from execution_testing.forks import (
-    BPO2,
     Amsterdam,
-    BPO2ToAmsterdamAtTime15k,
+    AmsterdamToBogotaAtTime15k,
+    Bogota,
     Fork,
     TransitionFork,
 )
 
 pytestmark = pytest.mark.evm_tools
+
+ZERO_NONCE_STORAGE_ACCOUNTS = [Address(0x8253), Address(0x8254)]
 
 
 def transition_tool_data(
@@ -47,6 +49,7 @@ def transition_tool_data(
         chain_id=1,
         reward=0,
         blob_schedule=None,
+        zero_nonce_storage_accounts=ZERO_NONCE_STORAGE_ACCOUNTS,
     )
 
 
@@ -55,30 +58,33 @@ def transition_tool_data(
     "fork,parent_timestamp,timestamp,active_fork,expect_bump",
     [
         pytest.param(
-            BPO2ToAmsterdamAtTime15k, 14998, 14999, BPO2, False, id="before"
+            AmsterdamToBogotaAtTime15k,
+            14998,
+            14999,
+            Amsterdam,
+            False,
+            id="before",
         ),
         pytest.param(
-            BPO2ToAmsterdamAtTime15k, 14999, 15000, Amsterdam, True, id="at"
+            AmsterdamToBogotaAtTime15k, 14999, 15000, Bogota, True, id="at"
         ),
         pytest.param(
-            BPO2ToAmsterdamAtTime15k,
+            AmsterdamToBogotaAtTime15k,
             14999,
             15007,
-            Amsterdam,
+            Bogota,
             True,
             id="skipped-slot",
         ),
         pytest.param(
-            BPO2ToAmsterdamAtTime15k,
+            AmsterdamToBogotaAtTime15k,
             15000,
             15001,
-            Amsterdam,
+            Bogota,
             False,
             id="after",
         ),
-        pytest.param(
-            Amsterdam, 14999, 15000, Amsterdam, False, id="no-schedule"
-        ),
+        pytest.param(Bogota, 14999, 15000, Bogota, False, id="no-schedule"),
     ],
 )
 def test_fork_block_from_schedule(
@@ -124,10 +130,22 @@ def test_fork_block_from_schedule(
         assert t8n.is_fork_block == expect_bump
         output = t8n.run().alloc.materialize()
 
-    for address in Amsterdam.zero_nonce_storage_accounts():
-        if expect_bump:
+    for address in ZERO_NONCE_STORAGE_ACCOUNTS:
+        if expect_bump and path == "in-process":
             account = output[address]
             assert account is not None
             assert account.nonce == 1
         else:
             assert address not in output
+
+
+def test_fork_block_with_empty_list() -> None:
+    """Leave the fork block untouched when the chain lists no accounts."""
+    data = transition_tool_data(AmsterdamToBogotaAtTime15k, 14999, 15000)
+    data.zero_nonce_storage_accounts = []
+    with ForkCache() as cache:
+        t8n = T8N(data, cache=cache)
+        assert t8n.is_fork_block
+        output = t8n.run().alloc.materialize()
+    for address in ZERO_NONCE_STORAGE_ACCOUNTS:
+        assert address not in output

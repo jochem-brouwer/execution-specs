@@ -14,6 +14,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Tuple,
     Type,
     TypeVar,
 )
@@ -33,7 +34,7 @@ from ethereum_spec_tools.loaders.transaction_loader import (
     UnsupportedTxError,
 )
 from ethereum_spec_tools.utils import get_stream_logger, resolve_fork
-from ethereum_types.bytes import Bytes
+from ethereum_types.bytes import Bytes, Bytes20
 from ethereum_types.numeric import U64, U256, Uint
 from typing_extensions import override
 
@@ -141,6 +142,7 @@ class T8N(Load):
     state_test: bool
     state_reward: int
     fork_schedule: "Fork | TransitionFork"
+    zero_nonce_storage_accounts: Tuple[Bytes20, ...]
     exception_mapper: Optional["ExceptionMapper"]
     _block_exception: Optional[str]
 
@@ -216,6 +218,10 @@ class T8N(Load):
         self.state_test = t8n_data.state_test
         self.state_reward = t8n_data.reward
         self.fork_schedule = t8n_data.fork
+        self.zero_nonce_storage_accounts = tuple(
+            Bytes20(address)
+            for address in t8n_data.zero_nonce_storage_accounts
+        )
         self.exception_mapper = exception_mapper
 
         from execution_testing.client_clis.cli_types import LazyAlloc
@@ -398,7 +404,9 @@ class T8N(Load):
         # EIP-8253: the fork block bumps the nonce of the zero-nonce
         # storage accounts before any pre-execution system call.
         if self.fork.has_zero_nonce_storage_accounts and self.is_fork_block:
-            self.fork.bump_zero_nonce_storage_accounts(block_env)
+            self.fork.bump_zero_nonce_storage_accounts(
+                block_env, self.zero_nonce_storage_accounts
+            )
 
         # Same order as the fork's `apply_body`: beacon roots, then history.
         if self.fork.has_beacon_roots_address:
